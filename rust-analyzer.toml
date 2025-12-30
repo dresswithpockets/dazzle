@@ -1,0 +1,3 @@
+check.command = "clippy"
+cargo.targetDir = true
+# cargo.buildScripts.enable = true

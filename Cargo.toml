@@ -1,0 +1,28 @@
+[package]
+name = "tf2-preloader"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+default-members = [
+    ".",
+]
+members = [
+    ".",
+    "vpk",
+    "pcf",
+]
+
+[dependencies]
+pcf = { version = "0.1.0", path = "pcf" }
+vpk = { version = "0.1.0", path = "vpk" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+todo = "forbid"
+empty_loop = "forbid"
+infinite_loop = "deny"
+mem_forget = "deny"
