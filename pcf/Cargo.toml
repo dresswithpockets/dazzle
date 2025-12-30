@@ -1,0 +1,20 @@
+[package]
+name = "pcf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+byteorder = "1.5"
+bytes = "1.11"
+derive_more = { version = "2.1", features = [ "from", "into" ] }
+thiserror = "2.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+todo = "warn"
+empty_loop = "forbid"
+infinite_loop = "deny"
+mem_forget = "deny"
