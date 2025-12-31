@@ -15,8 +15,13 @@ members = [
 ]
 
 [dependencies]
+anyhow = "1.0"
 pcf = { version = "0.1.0", path = "pcf" }
-vpk = { version = "0.1.0", path = "vpk" }
+# vpk = { version = "0.1.0", path = "vpk" }
+vpk = "0.3"
+directories = { version = "6.0" }
+derive_more = { version = "2.1", features = [ "from", "into" ] }
+thiserror = "2.0"
 
 [lints.rust]
 unsafe_code = "forbid"
