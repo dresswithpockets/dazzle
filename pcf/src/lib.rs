@@ -11,7 +11,7 @@
 //!     // modify pcf elements or attributes...
 //!     // ...
 //! ```
-//! 
+//!
 //! Encode a pcf back into a file
 //! ```
 //!     let file = File::open("new_particles.pcf")?;
@@ -137,11 +137,7 @@ impl From<Bool8> for bool {
 
 impl From<bool> for Bool8 {
     fn from(value: bool) -> Self {
-        if value {
-            Self(1)
-        } else {
-            Self(0)
-        }
+        if value { Self(1) } else { Self(0) }
     }
 }
 
@@ -199,7 +195,7 @@ impl Pcf {
             let type_idx = file.read_u16::<LittleEndian>()?;
             let name = Self::read_terminated_string(file)?;
             let signature = file.read_array::<16>()?;
-            
+
             elements.push(Element {
                 type_idx,
                 name,
@@ -339,35 +335,35 @@ impl Pcf {
             Attribute::Binary(items) => {
                 file.write_u32::<LittleEndian>(items.len() as u32)?;
                 file.write_all(items.as_slice())?;
-            },
+            }
             Attribute::Color(color) => {
                 file.write_u8(color.0)?;
                 file.write_u8(color.1)?;
                 file.write_u8(color.2)?;
                 file.write_u8(color.3)?;
-            },
+            }
             Attribute::Vector2(vector2) => {
                 file.write_f32::<LittleEndian>(vector2.0)?;
                 file.write_f32::<LittleEndian>(vector2.1)?;
-            },
+            }
             Attribute::Vector3(vector3) => {
                 file.write_f32::<LittleEndian>(vector3.0)?;
                 file.write_f32::<LittleEndian>(vector3.1)?;
                 file.write_f32::<LittleEndian>(vector3.2)?;
-            },
+            }
             Attribute::Vector4(vector4) => write_vector4(vector4, file)?,
             Attribute::Matrix(matrix) => {
                 write_vector4(&matrix.0, file)?;
                 write_vector4(&matrix.1, file)?;
                 write_vector4(&matrix.2, file)?;
                 write_vector4(&matrix.3, file)?;
-            },
+            }
             Attribute::Array(_, attributes) => {
                 file.write_u32::<LittleEndian>(attributes.len() as u32)?;
                 for attribute in attributes {
                     Self::write_attribute_data(attribute, file)?;
                 }
-            },
+            }
         }
 
         Ok(())
@@ -385,7 +381,7 @@ mod tests {
     #[test]
     fn encodes_and_decodes_valid_pcf() {
         let mut reader = Bytes::from(TEST_PCF).reader();
-        
+
         let pcf = Pcf::decode(&mut reader).unwrap();
         assert_eq!(pcf.version, Version::Binary2Pcf1);
         assert_eq!(pcf.strings.len(), 231);
@@ -403,6 +399,10 @@ mod tests {
 
         let bytes = writer.get_ref();
         assert_eq!(TEST_PCF.len(), bytes.len());
-        assert_eq!(TEST_PCF, &writer.get_ref()[..], "expected decoded buf and encoded buf to be identical.");
+        assert_eq!(
+            TEST_PCF,
+            &writer.get_ref()[..],
+            "expected decoded buf and encoded buf to be identical."
+        );
     }
 }

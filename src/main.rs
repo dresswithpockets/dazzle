@@ -13,7 +13,7 @@
 //!
 //! # Why?
 //!
-//! Cueki has done a good amount of work creating a usable preloader. The goal is to create a simpler and more 
+//! Cueki has done a good amount of work creating a usable preloader. The goal is to create a simpler and more
 //! performant implementation.
 //!
 //! I'm also using this as a means to practice more idiomatic Rust.
@@ -22,7 +22,13 @@
 #![feature(duration_constructors)]
 #![warn(clippy::pedantic)]
 
-use std::{fs::{self, File, OpenOptions}, io::{self, BufReader, BufWriter, Seek, SeekFrom}, path::{Path, PathBuf}, process, str::FromStr};
+use std::{
+    fs::{self, File, OpenOptions},
+    io::{self, BufReader, BufWriter, Seek, SeekFrom},
+    path::{Path, PathBuf},
+    process,
+    str::FromStr,
+};
 
 use directories::ProjectDirs;
 use glob::glob;
@@ -75,7 +81,9 @@ fn main() -> anyhow::Result<()> {
     let tf_dir: PathBuf = PathBuf::from("/home/snale/.local/share/Steam/steamapps/common/Team Fortress 2/tf/");
 
     let Some(project_dirs) = ProjectDirs::from("net", "dresswithpockets", "tf2preloader") else {
-        eprintln!("Couldn't retrieve a home directory to store configurations in. Please ensure tf2-preloader can read and write into a $HOME directory.");
+        eprintln!(
+            "Couldn't retrieve a home directory to store configurations in. Please ensure tf2-preloader can read and write into a $HOME directory."
+        );
         process::exit(1);
     };
 
@@ -86,7 +94,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     let config_file = config_dir.join("config.toml");
-    if let Err(err) = File::create_new(&config_file) && err.kind() != io::ErrorKind::AlreadyExists {
+    if let Err(err) = File::create_new(&config_file)
+        && err.kind() != io::ErrorKind::AlreadyExists
+    {
         eprintln!("Couldn't create config.toml: {err}");
         process::exit(1);
     }
@@ -122,7 +132,7 @@ fn main() -> anyhow::Result<()> {
         Err(err) => {
             eprintln!("Couldn't open tf/tf2_misc_dir.vpk: {err}");
             process::exit(1);
-        },
+        }
     };
 
     let particles_glob = backup_dir.to_str().expect("this should never happen").to_string() + "/particles/**/*.pcf";
@@ -171,14 +181,14 @@ enum PatchError {
     PartialWrite(u64, u64),
 
     #[error(transparent)]
-    IoError(#[from] io::Error)
+    IoError(#[from] io::Error),
 }
 
 /// patches data over an existing entry in the vpk's tree
-/// 
+///
 fn patch_file(vpk: &mut VPK, path_in_vpk: &str, path_on_disk: &Path) -> Result<(), PatchError> {
     let entry = vpk.tree.get(path_in_vpk).ok_or(PatchError::NotFound)?;
-    
+
     if entry.dir_entry.preload_length > 0 {
         return Err(PatchError::HasPreloadData);
     }
@@ -190,7 +200,7 @@ fn patch_file(vpk: &mut VPK, path_in_vpk: &str, path_on_disk: &Path) -> Result<(
     // TODO: what about preload_length? does patch_file need to ever handle preloaded files?
     let entry_size = u64::from(entry.dir_entry.file_length);
     let new_file_size = path_on_disk.symlink_metadata()?.len();
-    
+
     if entry_size != new_file_size {
         return Err(PatchError::MismatchedSizes(new_file_size, entry_size));
     }
@@ -204,7 +214,7 @@ fn patch_file(vpk: &mut VPK, path_in_vpk: &str, path_on_disk: &Path) -> Result<(
 
     let copied = io::copy(&mut new_file, &mut archive_file)?;
     if copied != entry_size {
-        return Err(PatchError::PartialWrite(copied, entry_size))
+        return Err(PatchError::PartialWrite(copied, entry_size));
     }
 
     Ok(())
