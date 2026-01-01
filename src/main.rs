@@ -22,9 +22,12 @@
 #![feature(duration_constructors)]
 #![warn(clippy::pedantic)]
 
-use std::{ffi::OsStr, fs::{self, File, OpenOptions}, io::{self, BufReader, BufWriter, Seek, SeekFrom}, path::{Path, PathBuf}, process};
+use std::{fs::{self, File, OpenOptions}, io::{self, BufReader, BufWriter, Seek, SeekFrom}, path::{Path, PathBuf}, process, str::FromStr};
 
 use directories::ProjectDirs;
+use glob::glob;
+use relative_path::{RelativePath, RelativePathBuf};
+use single_instance::SingleInstance;
 use thiserror::Error;
 use vpk::VPK;
 
@@ -35,7 +38,7 @@ struct App<'a> {
     backup_dir: &'a Path,
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     /*
        TODO: on first-run establish an application folder for configuration & storing unprocessed mods
        TODO: if not already configured, detect/select a tf/ directory
@@ -59,6 +62,12 @@ fn main() {
            - generates a w/config.cfg for execution at launch (preloading, etc)
            - packs processed mods into custom vpk
     */
+
+    let instance = SingleInstance::new("net.dresswithpockets.tf2preloader.lock")?;
+    if !instance.is_single() {
+        eprintln!("There is another instance of tf2-preloader running. Only one instance can run at a time.");
+        process::exit(1);
+    }
 
     // starting out, we're going to get custom particles working
 
@@ -90,11 +99,12 @@ fn main() {
         process::exit(1);
     }
 
-    let backup_dir = data_dir.join("backup");
-    if let Err(err) = fs::create_dir_all(&backup_dir) {
-        eprintln!("Couldn't create the backup directory: {err}");
-        process::exit(1);
-    }
+    let backup_dir = PathBuf::from_str("./backup")?;
+    // let backup_dir = data_dir.join("backup");
+    // if let Err(err) = fs::create_dir_all(&backup_dir) {
+    //     eprintln!("Couldn't create the backup directory: {err}");
+    //     process::exit(1);
+    // }
 
     let app = App {
         config_dir,
@@ -115,22 +125,39 @@ fn main() {
         },
     };
 
-    // To patch particles, we have to modify the game's VPKs containing the particles;
-    // to guarantee we're always starting from a valid state, we rely on a backup of every file we're patching.
-    // TODO: "restore" particle files. backup_particle_files should be a list of paths to particle files in our backup folder
-    let backup_particle_files: Vec<&Path> = Vec::new();
+    let particles_glob = backup_dir.to_str().expect("this should never happen").to_string() + "/particles/**/*.pcf";
+    let backup_particle_paths = glob(&particles_glob)?
+        .map(|path| -> anyhow::Result<RelativePathBuf> {
+            let mut path: &Path = &path?;
+            if path.is_absolute() {
+                path = path.strip_prefix(app.backup_dir)?;
+            }
 
-    for particle_file in backup_particle_files {
-        let filename = particle_file.file_name().and_then(OsStr::to_str).expect("missing filename in particle file path");
-        let path = format!("particles/{filename}");
-        if let Err(err) = patch_file(&mut vpk, &path, particle_file) {
-            eprintln!("Error patching particle file '{}': {err}", particle_file.display());
+            Ok(RelativePathBuf::from_path(path)?)
+        })
+        .collect::<anyhow::Result<Vec<RelativePathBuf>>>()?;
+
+    // restore the particles in the misc vpk with our backup, to ensure we're at a clean state
+    for particle_file in backup_particle_paths {
+        // given ./particles/example.pcf, we should map to:
+
+        //   /particles/example.pcf - the path to the file in the VPK
+        let path_in_vpk = particle_file.to_path("/");
+        let path_in_vpk = path_in_vpk.to_str().expect("this should never happen");
+
+        //   /path/to/backup/particles/example.pcf - the actual on-disk path of the backup particle file
+        let path_on_disk = particle_file.to_path(app.backup_dir);
+
+        if let Err(err) = patch_file(&mut vpk, path_in_vpk, &path_on_disk) {
+            eprintln!("Error patching particle file '{particle_file}': {err}");
         }
     }
+
+    Ok(())
 }
 
 #[derive(Debug, Error)]
-pub enum PatchError {
+enum PatchError {
     #[error("file not found in vpk")]
     NotFound,
 
@@ -149,8 +176,8 @@ pub enum PatchError {
 
 /// patches data over an existing entry in the vpk's tree
 /// 
-fn patch_file(vpk: &mut VPK, path: &str, new_file: &Path) -> Result<(), PatchError> {
-    let entry = vpk.tree.get(path).ok_or(PatchError::NotFound)?;
+fn patch_file(vpk: &mut VPK, path_in_vpk: &str, path_on_disk: &Path) -> Result<(), PatchError> {
+    let entry = vpk.tree.get(path_in_vpk).ok_or(PatchError::NotFound)?;
     
     if entry.dir_entry.preload_length > 0 {
         return Err(PatchError::HasPreloadData);
@@ -162,13 +189,13 @@ fn patch_file(vpk: &mut VPK, path: &str, new_file: &Path) -> Result<(), PatchErr
 
     // TODO: what about preload_length? does patch_file need to ever handle preloaded files?
     let entry_size = u64::from(entry.dir_entry.file_length);
-    let new_file_size = new_file.symlink_metadata()?.len();
+    let new_file_size = path_on_disk.symlink_metadata()?.len();
     
     if entry_size != new_file_size {
         return Err(PatchError::MismatchedSizes(new_file_size, entry_size));
     }
 
-    let new_file = File::open(new_file)?;
+    let new_file = File::open(path_on_disk)?;
     let mut new_file = BufReader::new(new_file);
 
     let archive_file = OpenOptions::new().write(true).open(archive_path.as_ref())?;

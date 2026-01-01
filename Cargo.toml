@@ -22,6 +22,15 @@ vpk = "0.3"
 directories = { version = "6.0" }
 derive_more = { version = "2.1", features = [ "from", "into" ] }
 thiserror = "2.0"
+glob = "0.3"
+walkdir = "2.5"
+relative-path = "2.0"
+# TODO: single_instance's macos implementation might not be desirable since this program is intended to be portable... maybe we just dont support macos (:
+single-instance = "0.3"
+
+[build-dependencies]
+copy_to_output = "2.2.0"
+glob = "0.3"
 
 [lints.rust]
 unsafe_code = "forbid"
