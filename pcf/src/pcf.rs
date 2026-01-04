@@ -2,6 +2,7 @@ use std::{collections::{HashMap, HashSet}, ffi::{CStr, CString}, hash::Hash, mar
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use either::Either::{self, Left, Right};
+use ordermap::OrderMap;
 use thiserror::Error;
 
 use crate::attribute::{self, Attribute, AttributeReader, AttributeWriter, NameIndex, ReadError};
@@ -53,7 +54,7 @@ pub struct Element {
     pub type_idx: u16,
     pub name: CString,
     pub signature: [u8; 16],
-    pub attributes: Vec<(NameIndex, Attribute)>,
+    pub attributes: OrderMap<NameIndex, Attribute>,
 }
 
 #[derive(Debug)]
@@ -301,13 +302,13 @@ impl Pcf {
                 type_idx,
                 name,
                 signature,
-                attributes: Vec::new(),
+                attributes: OrderMap::new(),
             });
         }
 
         for element in &mut elements {
             let reader = AttributeReader::try_from(file, element_count)?.into_iter();
-            let attributes: Result<Vec<(NameIndex, Attribute)>, ReadError> = reader.collect();
+            let attributes: Result<OrderMap<NameIndex, Attribute>, ReadError> = reader.collect();
             element.attributes = attributes?;
         }
 
