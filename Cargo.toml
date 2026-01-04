@@ -1,24 +1,18 @@
 [package]
-name = "tf2-preloader"
+name = "dazzle"
+description = "process and install TF2 mods"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 
 [workspace]
-default-members = [
-    ".",
-]
-members = [
-    ".",
-    "vpk",
-    "pcf",
-]
+default-members = [ ".", ]
+members = [ ".", "pcf", ]
 
 [dependencies]
 anyhow = "1.0"
 pcf = { version = "0.1.0", path = "pcf" }
 copy_dir = "0.1"
-# vpk = { version = "0.1.0", path = "vpk" }
 vpk = "0.3"
 directories = { version = "6.0" }
 derive_more = { version = "2.1", features = [ "from", "into" ] }
@@ -26,7 +20,6 @@ thiserror = "2.0"
 glob = "0.3"
 walkdir = "2.5"
 relative-path = "2.0"
-# TODO: single_instance's macos implementation might not be desirable since this program is intended to be portable... maybe we just dont support macos (:
 single-instance = "0.3"
 typed-path = "0.11"
 serde_json = "1.0"

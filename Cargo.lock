@@ -130,6 +130,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "dazzle"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copy_dir",
+ "copy_to_output",
+ "derive_more",
+ "directories",
+ "glob",
+ "ordermap",
+ "pcf",
+ "relative-path",
+ "serde_json",
+ "single-instance",
+ "thiserror 2.0.17",
+ "typed-path",
+ "vpk",
+ "walkdir",
+]
+
+[[package]]
 name = "derive_more"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -502,27 +523,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tf2-preloader"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "copy_dir",
- "copy_to_output",
- "derive_more",
- "directories",
- "glob",
- "ordermap",
- "pcf",
- "relative-path",
- "serde_json",
- "single-instance",
- "thiserror 2.0.17",
- "typed-path",
- "vpk 0.3.0",
- "walkdir",
-]
-
-[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -590,13 +590,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vpk"
-version = "0.1.0"
-dependencies = [
- "anyhow",
-]
 
 [[package]]
 name = "vpk"
