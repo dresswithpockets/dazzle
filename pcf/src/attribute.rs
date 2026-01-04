@@ -35,6 +35,10 @@ pub enum Attribute {
     MatrixArray(Box<[Matrix]>),
 }
 
+impl Default for Attribute {
+    fn default() -> Self { Self::Element(u32::MAX) }
+}
+
 impl Attribute {
     fn as_type(&self) -> u8 {
         match self {
