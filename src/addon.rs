@@ -1,11 +1,14 @@
 use anyhow::anyhow;
 use copy_dir::copy_dir;
 use glob::glob;
+use thiserror::Error;
 use std::{
-    collections::HashMap, fs::{self, File, OpenOptions}, io::{self, BufWriter}, path::Path
+    collections::HashMap, fs::{self, File, OpenOptions}, io::{self, BufWriter}, path::{Path, PathBuf}
 };
 use typed_path::{PlatformPath, Utf8PlatformPath, Utf8PlatformPathBuf};
 use vpk::VPK;
+
+use crate::paths::std_to_typed;
 
 #[derive(Debug)]
 pub struct Info {
@@ -63,20 +66,57 @@ pub enum Source {
     Vpk(Utf8PlatformPathBuf),
 }
 
-impl Source {
-    pub fn get_addon_sources(addons_dir: impl AsRef<Path>) -> anyhow::Result<Vec<Source>> {
-        let mods_glob = addons_dir
-            .as_ref()
-            .to_str()
-            .expect("this should never happen")
-            .to_string()
-            + "/mods/*.vpk";
-        glob(&mods_glob)?.map(|path| Source::from_path_owned(&path?)).collect()
-    }
+#[derive(Debug)]
+pub struct Sources {
+    pub sources: Box<[Source]>,
+    pub failures: Box<[(PathBuf, Error)]>,
+}
 
-    pub fn from_path_owned(source: &std::path::Path) -> anyhow::Result<Source> {
+impl Sources {
+    /// Searches `addons_dir` for addon sources, and produces a [`Vec`] of [`Source`].
+    /// 
+    /// ## Errors
+    /// 
+    /// See [`fs::read_dir`] for potential terminal errors. Some failures won't result in [Err]. The resulting 
+    /// [Sources::failures] will contain information about each entry in `addons_dir` that produced an error.
+    pub fn read_dir(addons_dir: impl AsRef<Path>) -> Result<Sources, Error> {
+        let mut sources = Vec::new();
+        let mut failures = Vec::new();
+        for entry in addons_dir.as_ref().read_dir()? {
+            let entry = entry?;
+            let path = entry.path();
+            match Source::from_path(&path) {
+                Ok(source) => sources.push(source),
+                Err(err) => failures.push((path, err)),
+            }
+        }
+
+        Ok(Sources {
+            sources: sources.into_boxed_slice(),
+            failures: failures.into_boxed_slice(),
+        })
+        // let addons_glob = addons_dir.as_ref().join("*");
+        // let addons_glob = addons_glob.to_str().expect("this should never happen");
+        // glob(addons_glob)?.map(|path| Source::from_path(&path?)).collect()
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("unsupported addon type at '{0}'")]
+    UnsupportedAddonType(Utf8PlatformPathBuf),
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+
+    #[error(transparent)]
+    Utf8(#[from] std::str::Utf8Error),
+}
+
+impl Source {
+    pub fn from_path(source: &std::path::Path) -> Result<Source, Error> {
         let metadata = fs::metadata(source)?;
-        let source = Utf8PlatformPath::from_bytes_path(PlatformPath::new(source.as_os_str().as_encoded_bytes()))?;
+        let source = std_to_typed(source)?;
         if metadata.is_dir() {
             Ok(Source::Folder(source.to_path_buf()))
         } else if metadata.is_file()
@@ -85,7 +125,7 @@ impl Source {
         {
             Ok(Source::Vpk(source.to_path_buf()))
         } else {
-            Err(anyhow!("unsupported addon type at {source}"))
+            Err(Error::UnsupportedAddonType(source.to_path_buf()))
         }
     }
 

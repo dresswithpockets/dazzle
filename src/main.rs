@@ -40,7 +40,7 @@ use thiserror::Error;
 use typed_path::Utf8PlatformPathBuf;
 use vpk::VPK;
 
-use crate::addon::Source;
+use crate::addon::Sources;
 
 pub mod addon;
 
@@ -165,7 +165,7 @@ fn main() -> anyhow::Result<()> {
 
     let addons_dir = working_dir.join("addons");
     if let Err(err) = fs::create_dir_all(&addons_dir) {
-        eprintln!("Couldn't create the mods directory: {err}");
+        eprintln!("Couldn't create the addons directory: {err}");
         process::exit(1);
     }
 
@@ -200,7 +200,7 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    let sources = match Source::get_addon_sources(&app.addons_dir) {
+    let sources = match Sources::read_dir(&app.addons_dir) {
         Ok(sources) => sources,
         Err(err) => {
             eprintln!("Couldn't open some addons: {err}");
@@ -208,11 +208,15 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
+    for (path, err) in &sources.failures {
+        eprintln!("There was an error reading the addon source '{}': {err}", path.display());
+    }
+
     // to simplify processing and copying data from addons, we extract it before hand.
     // this means the interface into each addon becomes effectively identical - we can just read/write to them as normal
     // files without modifying the original addon files.
     let mut extracted_addons = Vec::new();
-    for source in sources {
+    for source in sources.sources {
         let extracted = match source.extract_as_subfolder_in(&app.extracted_addons_dir) {
             Ok(extracted) => extracted,
             Err(err) => {
