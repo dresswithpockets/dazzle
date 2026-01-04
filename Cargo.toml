@@ -17,6 +17,7 @@ members = [
 [dependencies]
 anyhow = "1.0"
 pcf = { version = "0.1.0", path = "pcf" }
+copy_dir = "0.1"
 # vpk = { version = "0.1.0", path = "vpk" }
 vpk = "0.3"
 directories = { version = "6.0" }
@@ -27,6 +28,9 @@ walkdir = "2.5"
 relative-path = "2.0"
 # TODO: single_instance's macos implementation might not be desirable since this program is intended to be portable... maybe we just dont support macos (:
 single-instance = "0.3"
+typed-path = "0.11"
+serde_json = "1.0"
+ordermap = "1.0"
 
 [build-dependencies]
 copy_to_output = "2.2.0"
