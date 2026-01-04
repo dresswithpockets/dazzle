@@ -12,6 +12,7 @@ either = "1.15"
 thiserror = "2.0"
 type-state-builder = { version = "0.5" }
 ordered-float = { version = "5.0", default-features = false }
+ordermap = "1.0"
 
 [lints.rust]
 unsafe_code = "forbid"
