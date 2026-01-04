@@ -8,7 +8,10 @@ anyhow = "1.0"
 byteorder = "1.5"
 bytes = "1.11"
 derive_more = { version = "2.1", features = [ "from", "into" ] }
+either = "1.15"
 thiserror = "2.0"
+type-state-builder = { version = "0.5" }
+ordered-float = { version = "5.0", default-features = false }
 
 [lints.rust]
 unsafe_code = "forbid"
