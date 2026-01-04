@@ -1,6 +1,6 @@
-//! TF2 asset preloader based on cueki's casual preloader.
+//! TF2 asset preloader inspired by cueki's casual preloader.
 //!
-//! It supports these mods:
+//! It supports these addons:
 //!
 //! - Particles
 //! - Models
