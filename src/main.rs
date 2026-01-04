@@ -34,7 +34,6 @@ use anyhow::anyhow;
 use directories::ProjectDirs;
 use glob::glob;
 use ordermap::OrderSet;
-use pcf::{Attribute, Element, Pcf};
 use relative_path::RelativePathBuf;
 use single_instance::SingleInstance;
 use thiserror::Error;
@@ -255,7 +254,7 @@ fn main() -> anyhow::Result<()> {
                 continue
             }
 
-            let mut elements_by_vanilla_pcf_path = HashMap::<&String, OrderSet<&Element>>::new();
+            let mut elements_by_vanilla_pcf_path = HashMap::<&String, OrderSet<&pcf::Element>>::new();
             for element in &pcf.elements {
                 let Some(pcf_path) = app.particle_system_to_pcf.get(&element.name) else {
                     continue
@@ -271,7 +270,7 @@ fn main() -> anyhow::Result<()> {
                 // first element, and that elements are iterated sequentially based on their original index in 
                 // ascending order. The resulting elements sequence has the same order as the original PCF, but the
                 // indices are different.
-                let mut original_elements: BTreeMap<u32, &Element> = BTreeMap::from([(0, root_element)]);
+                let mut original_elements: BTreeMap<u32, &pcf::Element> = BTreeMap::from([(0, root_element)]);
                 for element in elements_to_extract {
                     let Some(dependent_indices) = pcf.get_dependent_indices(&element.name) else {
                         continue;
@@ -293,18 +292,18 @@ fn main() -> anyhow::Result<()> {
                     .map(|(new_idx, (old_idx, _))| (*old_idx, new_idx as u32))
                     .collect();
 
-                let new_elements: Vec<Element> = original_elements.values().map(|element| {
+                let new_elements: Vec<pcf::Element> = original_elements.values().map(|element| {
                     let mut attributes = Vec::new();
 
                     // this monstrosity is re-mapping old element references to new ones using the new indices mapped 
                     // in old_to_new_idx
                     for (name_idx, attribute) in &element.attributes {
                         let new_attribute = match attribute {
-                            Attribute::Element(old_idx) if *old_idx != u32::MAX => {
-                                Attribute::Element(*old_to_new_idx.get(old_idx).unwrap_or(old_idx))
+                            pcf::Attribute::Element(old_idx) if old_idx != u32::MAX => {
+                                pcf::Attribute::Element(*old_to_new_idx.get(old_idx).unwrap_or(old_idx))
                             }
-                            Attribute::ElementArray(old_indices) => {
-                                Attribute::ElementArray(
+                            pcf::Attribute::ElementArray(old_indices) => {
+                                pcf::Attribute::ElementArray(
                                     old_indices.iter()
                                         .map(|old_idx| if *old_idx == u32::MAX {
                                             *old_idx
@@ -344,7 +343,7 @@ fn main() -> anyhow::Result<()> {
                         attributes.push((*name_idx, new_attribute));
                     }
 
-                    Element {
+                    pcf::Element {
                         type_idx: element.type_idx,
                         name: element.name.clone(),
                         signature: element.signature,
@@ -371,7 +370,7 @@ fn main() -> anyhow::Result<()> {
 
                 // TODO: add all particle systems to root element's definitions
 
-                let pcf = Pcf::builder()
+                let pcf = pcf::Pcf::builder()
                     .version(pcf.version)
                     .strings(pcf.strings.clone())
                     .elements(new_elements)

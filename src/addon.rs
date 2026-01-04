@@ -1,7 +1,6 @@
 use anyhow::anyhow;
 use copy_dir::copy_dir;
 use glob::glob;
-use pcf::Pcf;
 use std::{
     collections::HashMap, fs::{self, File, OpenOptions}, io::{self, BufWriter}, path::Path
 };
@@ -27,7 +26,7 @@ pub struct Addon {
     pub source_path: Utf8PlatformPathBuf,
 
     /// A list of PCF names provided by the addon
-    pub particle_files: HashMap<Utf8PlatformPathBuf, Pcf>,
+    pub particle_files: HashMap<Utf8PlatformPathBuf, pcf::Pcf>,
 }
 
 #[derive(Debug)]
@@ -45,7 +44,7 @@ impl Extracted {
             let path = Utf8PlatformPath::from_bytes_path(PlatformPath::new(path.as_os_str().as_encoded_bytes()))?;
 
             let mut file = File::open_buffered(path)?;
-            let pcf = Pcf::decode(&mut file)?;
+            let pcf = pcf::Pcf::decode(&mut file)?;
             particle_files.insert(path.to_path_buf(), pcf);
         }
 
