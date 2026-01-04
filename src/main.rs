@@ -299,7 +299,7 @@ fn main() -> anyhow::Result<()> {
                     // in old_to_new_idx
                     for (name_idx, attribute) in &element.attributes {
                         let new_attribute = match attribute {
-                            pcf::Attribute::Element(old_idx) if old_idx != u32::MAX => {
+                            pcf::Attribute::Element(old_idx) if *old_idx != u32::MAX => {
                                 pcf::Attribute::Element(*old_to_new_idx.get(old_idx).unwrap_or(old_idx))
                             }
                             pcf::Attribute::ElementArray(old_indices) => {
