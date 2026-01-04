@@ -28,7 +28,7 @@ pub mod pcf;
 pub mod attribute;
 
 pub use pcf::{Pcf, Element};
-pub use attribute::Attribute;
+pub use attribute::{Attribute, NameIndex};
 
 pub fn decode(buf: &mut impl std::io::BufRead) -> Result<Pcf, pcf::Error> {
     Pcf::decode(buf)
