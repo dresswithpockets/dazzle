@@ -67,37 +67,19 @@ mod paths {
 
 fn main() -> anyhow::Result<()> {
     /*
-       TODO: on first-run establish an application folder for configuration & storing unprocessed mods
        TODO: if not already configured, detect/select a tf/ directory
        TODO: tui for configuring enabled/disabled custom particles found in addons
        TODO: tui for selecting addons to install/uninstall
        TODO: detect conflicts in selected addons
-       TODO: process addons and pack into a custom VPK
-    */
-
-    /*
-     technical work:
-       TODO: port PCK parser
-       TODO: port VPK parser
-
-       General technical process:
-           - more...
-           - patches tf_misc_dir.vpk with particles
-           - patches hud overrides
-           - generates VMTs
-           - creates a _QuickPrecache.vpk for precached map props
-           - generates a w/config.cfg for execution at launch (preloading, etc)
-           - packs processed mods into custom vpk
     */
     const TF2_VPK_NAME: &str = "tf2_misc_dir.vpk";
 
+    // TODO: single_instance's macos implementation might not be desirable since this program is intended to be portable... maybe we just dont support macos (:
     let instance = SingleInstance::new("net.dresswithpockets.tf2preloader.lock")?;
     if !instance.is_single() {
         eprintln!("There is another instance of tf2-preloader running. Only one instance can run at a time.");
         process::exit(1);
     }
-
-    // starting out, we're going to get custom particles working
 
     let tf_dir: Utf8PlatformPathBuf = [
         "/",
@@ -244,9 +226,6 @@ fn main() -> anyhow::Result<()> {
     // TODO: evaluate the contents of each extracted addon to ensure they're valid
     // TODO: evaluate if there are any conflicting particles in each addon, and warn the user
     //       for now we're just assuming there are no conflicts
-
-    // TODO: preprocess particle files (merging and splitting?) (see AdvancedParticleMerger in cueki's loader)
-    //       this preprocess step should create new intermediate PCF files, with the modded particle systems merged into vanilla PCF files.
 
     // create intermediary split-up PCF files by cross referencing our addon PCFs with the particle_system_map.json
     for addon in &addons {
