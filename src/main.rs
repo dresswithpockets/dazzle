@@ -33,7 +33,7 @@ use std::{
 use anyhow::anyhow;
 use directories::ProjectDirs;
 use glob::glob;
-use ordermap::OrderSet;
+use ordermap::{OrderMap, OrderSet};
 use relative_path::RelativePathBuf;
 use single_instance::SingleInstance;
 use thiserror::Error;
@@ -249,10 +249,18 @@ fn main() -> anyhow::Result<()> {
         let processed_target_pcf_paths: HashMap<&String, Vec<String>> = HashMap::new();
         for (file_path, pcf) in &addon.particle_files{
             // dx80 and dx90 are a special case that we skip over. TODO: i think we generate them later?
-            let file_name = file_path.file_name().expect("there should always be a file name");
+            let file_name: &str = file_path.file_name().expect("there should always be a file name");
             if file_name.contains("dx80") || file_name.contains("dx90") {
                 continue
             }
+
+            let Some(definitions_name_idx) = pcf.strings.iter().position(|el|el == c"particleSystemDefinitions") else {
+                eprintln!("couldn't find the 'particleSystemDefinitions' string in '{file_name}'. This could mean that the source PCF was malformed. Addon: {}", addon.source_path);
+                continue;
+            };
+
+            #[allow(clippy::cast_possible_truncation)]
+            let definitions_name_idx = definitions_name_idx as pcf::NameIndex;
 
             let mut elements_by_vanilla_pcf_path = HashMap::<&String, OrderSet<&pcf::Element>>::new();
             for element in &pcf.elements {
@@ -287,13 +295,14 @@ fn main() -> anyhow::Result<()> {
 
                 // since we're producing a new list of these elements, we need to update any references to other 
                 // elements, since the index of the referenced element might change.
+                #[allow(clippy::cast_possible_truncation)]
                 let old_to_new_idx: HashMap<u32, u32> = original_elements.iter()
                     .enumerate()
                     .map(|(new_idx, (old_idx, _))| (*old_idx, new_idx as u32))
                     .collect();
 
-                let new_elements: Vec<pcf::Element> = original_elements.values().map(|element| {
-                    let mut attributes = Vec::new();
+                let mut new_elements: Vec<pcf::Element> = original_elements.values().map(|element| {
+                    let mut attributes = OrderMap::new();
 
                     // this monstrosity is re-mapping old element references to new ones using the new indices mapped 
                     // in old_to_new_idx
@@ -315,32 +324,8 @@ fn main() -> anyhow::Result<()> {
                             },
                             attribute => attribute.clone(),
                         };
-                        // let new_attribute = if let Attribute::Element(old_idx) = attribute {
-                        //     if *old_idx != u32::MAX && let Some(new_idx) = old_to_new_idx.get(&old_idx) {
-                        //         Attribute::Element(*new_idx)
-                        //     } else {
-                        //         attribute.clone()
-                        //     }
-                        // } else if let Attribute::ElementArray(old_indices) = attribute {
-                        //     let new_indices = old_indices.iter()
-                        //         .map(|el| {
-                                    
-                        //         })
-                        //     let new_indices = old_indices.iter()
-                        //         .map(|el| {
-                        //             if let Attribute::Element(old_idx) = el && *old_idx != u32::MAX && let Some(new_idx) = old_to_new_idx.get(&old_idx) {
-                        //                 Attribute::Element(*new_idx)
-                        //             } else {
-                        //                 el.clone()
-                        //             }
-                        //         });
-                            
-                        //     Attribute::Array(1, new_indices.collect())
-                        // } else {
-                        //     attribute.clone()
-                        // };
 
-                        attributes.push((*name_idx, new_attribute));
+                        attributes.insert(*name_idx, new_attribute);
                     }
 
                     pcf::Element {
@@ -351,25 +336,29 @@ fn main() -> anyhow::Result<()> {
                     }
                 }).collect();
 
-                let mut root_element = &new_elements[0];
+                // the root element always stores an attribute "particleSystemDefinitions" which stores an ElementArray
+                // containing the index of every DmeParticleSystemDefinition-type element. We've changed the indices of
+                // our particle system definitions, so we need to update the root element's list with the new indices.
+                let mut particle_system_indices = Vec::new();
+                for (element_idx, element) in new_elements.iter().enumerate().skip(1) {
+                    let Some(type_name) = pcf.strings.get(element.type_idx as usize) else {
+                        continue;
+                    };
 
-                /*
-                    # update root particleSystemDefinitions array
-    root = new_elements[0]
-    attr_type, _ = root.attributes[b'particleSystemDefinitions']
+                    if type_name != c"DmeParticleSystemDefinition" {
+                        continue;
+                    }
 
-    # add all particle system elements to root's definitions
-    particle_system_indices = []
-    for idx, element in enumerate(new_elements[1:], 1):  # skip root element
-        type_name = pcf_output.string_dictionary[element.type_name_index]
-        if type_name == b'DmeParticleSystemDefinition':
-            particle_system_indices.append(idx)
+                    #[allow(clippy::cast_possible_truncation)]
+                    particle_system_indices.push(element_idx as u32);
+                }
 
-    root.attributes[b'particleSystemDefinitions'] = (attr_type, particle_system_indices)
-                 */
+                // we've got the new indices now, so we can update the root element's list in-place
+                let root_definitions =  new_elements[0].attributes.entry(definitions_name_idx).or_default();
+                *root_definitions = particle_system_indices.into_boxed_slice().into();
 
-                // TODO: add all particle systems to root element's definitions
-
+                // this new in-memory PCF has only the elements listed in elements_to_extract, with element references
+                // fixed to match any changes in indices.
                 let pcf = pcf::Pcf::builder()
                     .version(pcf.version)
                     .strings(pcf.strings.clone())
