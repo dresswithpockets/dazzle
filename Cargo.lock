@@ -345,6 +345,7 @@ dependencies = [
  "derive_more",
  "either",
  "ordered-float",
+ "ordermap",
  "thiserror 2.0.17",
  "type-state-builder",
 ]
