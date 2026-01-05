@@ -1,10 +1,13 @@
 use anyhow::anyhow;
 use copy_dir::copy_dir;
 use glob::glob;
-use thiserror::Error;
 use std::{
-    collections::HashMap, fs::{self, File, OpenOptions}, io::{self, BufWriter}, path::{Path, PathBuf}
+    collections::HashMap,
+    fs::{self, File, OpenOptions},
+    io::{self, BufWriter},
+    path::{Path, PathBuf},
 };
+use thiserror::Error;
 use typed_path::{PlatformPath, Utf8PlatformPath, Utf8PlatformPathBuf};
 use vpk::VPK;
 
@@ -21,7 +24,6 @@ pub struct Info {
 #[derive(Debug)]
 pub struct Addon {
     // TODO: pub info: Info,
-
     /// the path where all content has been extracted or copied
     pub content_path: Utf8PlatformPathBuf,
 
@@ -74,10 +76,10 @@ pub struct Sources {
 
 impl Sources {
     /// Searches `addons_dir` for addon sources, and produces a [`Vec`] of [`Source`].
-    /// 
+    ///
     /// ## Errors
-    /// 
-    /// See [`fs::read_dir`] for potential terminal errors. Some failures won't result in [Err]: The resulting 
+    ///
+    /// See [`fs::read_dir`] for potential terminal errors. Some failures won't result in [Err]: The resulting
     /// [`Sources::failures`] will contain information about each entry in `addons_dir` that produced an error.
     pub fn read_dir(addons_dir: impl AsRef<Path>) -> Result<Sources, Error> {
         let mut sources = Vec::new();
@@ -115,14 +117,14 @@ pub enum Error {
 
 impl Source {
     /// Evaluates the `source` path to determine the [`Source`] type.
-    /// 
+    ///
     /// Can be one of:
-    /// 
+    ///
     /// - folder
     /// - vpk
-    /// 
+    ///
     /// ## Errors
-    /// 
+    ///
     /// - [`Error::UnsupportedAddonType`] if the path points to an addon that doesn't exist, or is not one of the supported types.
     pub fn from_path(source: &std::path::Path) -> Result<Source, Error> {
         let metadata = fs::metadata(source)?;
@@ -141,13 +143,13 @@ impl Source {
 
     /// Copies the contents of the source into a subfolder under [`parent`]. The subfolder will be named after the name
     /// of the source.
-    /// 
+    ///
     /// For example, if the Source points to a file `/path/to/addon.vpk` then the subfolder will be `{parent}/addon.vpk/`.
-    /// 
+    ///
     /// ## Errors
-    /// 
+    ///
     /// Errors if:
-    /// 
+    ///
     /// - the source is missing a file or directory name
     /// - a valid subfolder path couldn't be formed
     /// - `parent` doesn't exist

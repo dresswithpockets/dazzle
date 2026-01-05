@@ -36,7 +36,9 @@ pub enum Attribute {
 }
 
 impl Default for Attribute {
-    fn default() -> Self { Self::Element(u32::MAX) }
+    fn default() -> Self {
+        Self::Element(u32::MAX)
+    }
 }
 
 impl Attribute {
@@ -365,7 +367,7 @@ impl<'a, R: std::io::BufRead> Iterator for AttributeIterator<'a, R> {
                 Ok(value) => {
                     self.current_attribute_count = value as usize;
                     self.next()
-                },
+                }
                 Err(err) => Some(Err(ReadError::Io(err))),
             }
         }
@@ -390,7 +392,7 @@ impl<'a, R: std::io::BufRead> IntoIterator for AttributeReader<'a, R> {
 
 impl<'a, R: std::io::BufRead> AttributeReader<'a, R> {
     pub fn try_from(reader: &'a mut R, element_count: usize) -> Result<Self, ReadError> {
-        // we always read the first attribute count; next() expects that the element_count and 
+        // we always read the first attribute count; next() expects that the element_count and
         // current_attribute_count have both been set when applicable.
         let current_attribute_count = if element_count > 0 {
             reader.read_u32::<LittleEndian>()? as usize
@@ -448,7 +450,8 @@ impl<'a, R: std::io::BufRead> AttributeReader<'a, R> {
             25 => Ok(self.read_array::<Vector4>()?.into()),
             28 => Ok(self.read_array::<Matrix>()?.into()),
             invalid_type => Err(ReadError::InvalidAttributeType(invalid_type)),
-        }.map(|attr| (name_idx, attr))
+        }
+        .map(|attr| (name_idx, attr))
     }
 }
 

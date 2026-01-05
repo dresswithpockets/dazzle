@@ -27,7 +27,13 @@
 #![warn(clippy::pedantic)]
 
 use std::{
-    collections::{BTreeMap, HashMap}, ffi::CString, fs::{self, File, OpenOptions}, io::{self, BufReader, BufWriter, Seek, SeekFrom}, path::{Path, PathBuf}, process, str::FromStr
+    collections::{BTreeMap, HashMap},
+    ffi::CString,
+    fs::{self, File, OpenOptions},
+    io::{self, BufReader, BufWriter, Seek, SeekFrom},
+    path::{Path, PathBuf},
+    process,
+    str::FromStr,
 };
 
 use anyhow::anyhow;
@@ -154,11 +160,12 @@ fn main() -> anyhow::Result<()> {
 
     let backup_dir = PathBuf::from_str("./backup")?;
 
-    let pcf_to_particle_system: HashMap<String, Vec<CString>> = serde_json::from_str(include_str!("particle_system_map.json"))?;
-    let particle_system_to_pcf: HashMap<CString, String> = pcf_to_particle_system.iter()
-        .flat_map(|(pcf_path, systems)| {
-            systems.iter().map(|system| (system.clone(), pcf_path.clone()))
-        }).collect();
+    let pcf_to_particle_system: HashMap<String, Vec<CString>> =
+        serde_json::from_str(include_str!("particle_system_map.json"))?;
+    let particle_system_to_pcf: HashMap<CString, String> = pcf_to_particle_system
+        .iter()
+        .flat_map(|(pcf_path, systems)| systems.iter().map(|system| (system.clone(), pcf_path.clone())))
+        .collect();
 
     let app = App {
         _config_dir: paths::std_to_typed(config_dir)?.to_path_buf(),
@@ -192,7 +199,10 @@ fn main() -> anyhow::Result<()> {
     };
 
     for (path, err) in &sources.failures {
-        eprintln!("There was an error reading the addon source '{}': {err}", path.display());
+        eprintln!(
+            "There was an error reading the addon source '{}': {err}",
+            path.display()
+        );
     }
 
     // to simplify processing and copying data from addons, we extract it before hand.
@@ -218,7 +228,7 @@ fn main() -> anyhow::Result<()> {
             Err(err) => {
                 eprintln!("Couldn't parse content of some mods: {err}");
                 process::exit(1);
-            },
+            }
         };
 
         addons.push(content);
@@ -231,15 +241,19 @@ fn main() -> anyhow::Result<()> {
     // create intermediary split-up PCF files by cross referencing our addon PCFs with the particle_system_map.json
     for addon in &addons {
         let mut processed_target_pcf_paths: HashMap<&String, Vec<Pcf>> = HashMap::new();
-        for (file_path, pcf) in &addon.particle_files{
+        for (file_path, pcf) in &addon.particle_files {
             // dx80 and dx90 are a special case that we skip over. TODO: i think we generate them later?
             let file_name: &str = file_path.file_name().expect("there should always be a file name");
             if file_name.contains("dx80") || file_name.contains("dx90") {
-                continue
+                continue;
             }
 
-            let Some(definitions_name_idx) = pcf.strings.iter().position(|el|el == c"particleSystemDefinitions") else {
-                eprintln!("couldn't find the 'particleSystemDefinitions' string in '{file_name}'. This could mean that the source PCF was malformed. Addon: {}", addon.source_path);
+            let Some(definitions_name_idx) = pcf.strings.iter().position(|el| el == c"particleSystemDefinitions")
+            else {
+                eprintln!(
+                    "couldn't find the 'particleSystemDefinitions' string in '{file_name}'. This could mean that the source PCF was malformed. Addon: {}",
+                    addon.source_path
+                );
                 continue;
             };
 
@@ -249,17 +263,22 @@ fn main() -> anyhow::Result<()> {
             let mut elements_by_vanilla_pcf_path = HashMap::<&String, OrderSet<&pcf::Element>>::new();
             for element in &pcf.elements {
                 let Some(pcf_path) = app.particle_system_to_pcf.get(&element.name) else {
-                    continue
+                    continue;
                 };
 
-                elements_by_vanilla_pcf_path.entry(pcf_path).or_default().insert(element);
+                elements_by_vanilla_pcf_path
+                    .entry(pcf_path)
+                    .or_default()
+                    .insert(element);
             }
 
             for (target_pcf_path, elements_to_extract) in elements_by_vanilla_pcf_path {
-                let root_element = *elements_to_extract.get_index(0).ok_or(anyhow!("a target PCF has no elements"))?;
-                
-                // we use btreemap for consistent element ordering. This ensures that the root element is always the 
-                // first element, and that elements are iterated sequentially based on their original index in 
+                let root_element = *elements_to_extract
+                    .get_index(0)
+                    .ok_or(anyhow!("a target PCF has no elements"))?;
+
+                // we use btreemap for consistent element ordering. This ensures that the root element is always the
+                // first element, and that elements are iterated sequentially based on their original index in
                 // ascending order. The resulting elements sequence has the same order as the original PCF, but the
                 // indices are different.
                 let mut original_elements: BTreeMap<u32, &pcf::Element> = BTreeMap::from([(0, root_element)]);
@@ -277,48 +296,53 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                // since we're producing a new list of these elements, we need to update any references to other 
+                // since we're producing a new list of these elements, we need to update any references to other
                 // elements, since the index of the referenced element might change.
                 #[allow(clippy::cast_possible_truncation)]
-                let old_to_new_idx: HashMap<u32, u32> = original_elements.iter()
+                let old_to_new_idx: HashMap<u32, u32> = original_elements
+                    .iter()
                     .enumerate()
                     .map(|(new_idx, (old_idx, _))| (*old_idx, new_idx as u32))
                     .collect();
 
-                let mut new_elements: Vec<pcf::Element> = original_elements.values().map(|element| {
-                    let mut attributes = OrderMap::new();
+                let mut new_elements: Vec<pcf::Element> = original_elements
+                    .values()
+                    .map(|element| {
+                        let mut attributes = OrderMap::new();
 
-                    // this monstrosity is re-mapping old element references to new ones using the new indices mapped 
-                    // in old_to_new_idx
-                    for (name_idx, attribute) in &element.attributes {
-                        let new_attribute = match attribute {
-                            pcf::Attribute::Element(old_idx) if *old_idx != u32::MAX => {
-                                pcf::Attribute::Element(*old_to_new_idx.get(old_idx).unwrap_or(old_idx))
-                            }
-                            pcf::Attribute::ElementArray(old_indices) => {
-                                pcf::Attribute::ElementArray(
-                                    old_indices.iter()
-                                        .map(|old_idx| if *old_idx == u32::MAX {
-                                            *old_idx
-                                        } else {
-                                            *old_to_new_idx.get(old_idx).unwrap_or(old_idx)
+                        // this monstrosity is re-mapping old element references to new ones using the new indices mapped
+                        // in old_to_new_idx
+                        for (name_idx, attribute) in &element.attributes {
+                            let new_attribute = match attribute {
+                                pcf::Attribute::Element(old_idx) if *old_idx != u32::MAX => {
+                                    pcf::Attribute::Element(*old_to_new_idx.get(old_idx).unwrap_or(old_idx))
+                                }
+                                pcf::Attribute::ElementArray(old_indices) => pcf::Attribute::ElementArray(
+                                    old_indices
+                                        .iter()
+                                        .map(|old_idx| {
+                                            if *old_idx == u32::MAX {
+                                                *old_idx
+                                            } else {
+                                                *old_to_new_idx.get(old_idx).unwrap_or(old_idx)
+                                            }
                                         })
-                                        .collect()
-                                )
-                            },
-                            attribute => attribute.clone(),
-                        };
+                                        .collect(),
+                                ),
+                                attribute => attribute.clone(),
+                            };
 
-                        attributes.insert(*name_idx, new_attribute);
-                    }
+                            attributes.insert(*name_idx, new_attribute);
+                        }
 
-                    pcf::Element {
-                        type_idx: element.type_idx,
-                        name: element.name.clone(),
-                        signature: element.signature,
-                        attributes,
-                    }
-                }).collect();
+                        pcf::Element {
+                            type_idx: element.type_idx,
+                            name: element.name.clone(),
+                            signature: element.signature,
+                            attributes,
+                        }
+                    })
+                    .collect();
 
                 // the root element always stores an attribute "particleSystemDefinitions" which stores an ElementArray
                 // containing the index of every DmeParticleSystemDefinition-type element. We've changed the indices of
@@ -338,7 +362,7 @@ fn main() -> anyhow::Result<()> {
                 }
 
                 // we've got the new indices now, so we can update the root element's list in-place
-                let root_definitions =  new_elements[0].attributes.entry(definitions_name_idx).or_default();
+                let root_definitions = new_elements[0].attributes.entry(definitions_name_idx).or_default();
                 *root_definitions = particle_system_indices.into_boxed_slice().into();
 
                 // this new in-memory PCF has only the elements listed in elements_to_extract, with element references
@@ -349,13 +373,19 @@ fn main() -> anyhow::Result<()> {
                     .elements(new_elements)
                     .build();
 
-                processed_target_pcf_paths.entry(target_pcf_path).or_default().push(new_pcf);
+                processed_target_pcf_paths
+                    .entry(target_pcf_path)
+                    .or_default()
+                    .push(new_pcf);
             }
         }
 
-        // 
+        //
         for (target_pcf_path, mut pcf_files) in processed_target_pcf_paths {
-            let target_pcf_elements = app.pcf_to_particle_system.get(target_pcf_path).expect("The target_pcf_path is sourced from the particle system map, so this should never happen");
+            let target_pcf_elements = app
+                .pcf_to_particle_system
+                .get(target_pcf_path)
+                .expect("The target_pcf_path is sourced from the particle system map, so this should never happen");
             let target_pcf_elements: OrderSet<&CString> = target_pcf_elements.iter().collect();
 
             // TODO: get duplicate elements among pcf_files
@@ -366,7 +396,6 @@ fn main() -> anyhow::Result<()> {
             }
         }
     }
-    
 
     // ensure we start from a consistent state by restoring the particles in the tf misc vpk back to vanilla content.
     if let Err(err) = restore_particles_from_backup(&mut misc_vpk, &app.backup_dir) {

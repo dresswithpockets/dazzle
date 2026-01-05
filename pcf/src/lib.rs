@@ -24,11 +24,11 @@
 #![feature(trim_prefix_suffix)]
 #![feature(associated_type_defaults)]
 
-pub mod pcf;
 pub mod attribute;
+pub mod pcf;
 
-pub use pcf::{Pcf, Element, TypeIndex};
 pub use attribute::{Attribute, NameIndex};
+pub use pcf::{Element, Pcf, TypeIndex};
 
 pub fn decode(buf: &mut impl std::io::BufRead) -> Result<Pcf, pcf::Error> {
     Pcf::decode(buf)
