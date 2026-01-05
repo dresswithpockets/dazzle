@@ -34,6 +34,7 @@ use anyhow::anyhow;
 use directories::ProjectDirs;
 use glob::glob;
 use ordermap::{OrderMap, OrderSet};
+use pcf::Pcf;
 use relative_path::RelativePathBuf;
 use single_instance::SingleInstance;
 use thiserror::Error;
@@ -51,7 +52,7 @@ struct App {
     extracted_addons_dir: Utf8PlatformPathBuf,
     particles_working_dir: Utf8PlatformPathBuf,
     backup_dir: Utf8PlatformPathBuf,
-    _pcf_to_particle_system: HashMap<String, Vec<CString>>,
+    pcf_to_particle_system: HashMap<String, Vec<CString>>,
     particle_system_to_pcf: HashMap<CString, String>,
 }
 
@@ -166,7 +167,7 @@ fn main() -> anyhow::Result<()> {
         particles_working_dir: paths::std_to_typed(&particles_working_dir)?.to_path_buf(),
         addons_dir: paths::std_to_typed(&addons_dir)?.to_path_buf(),
         backup_dir: paths::std_to_typed(&backup_dir)?.to_path_buf(),
-        _pcf_to_particle_system: pcf_to_particle_system,
+        pcf_to_particle_system,
         particle_system_to_pcf,
     };
 
@@ -229,7 +230,7 @@ fn main() -> anyhow::Result<()> {
 
     // create intermediary split-up PCF files by cross referencing our addon PCFs with the particle_system_map.json
     for addon in &addons {
-        let processed_target_pcf_paths: HashMap<&String, Vec<String>> = HashMap::new();
+        let mut processed_target_pcf_paths: HashMap<&String, Vec<Pcf>> = HashMap::new();
         for (file_path, pcf) in &addon.particle_files{
             // dx80 and dx90 are a special case that we skip over. TODO: i think we generate them later?
             let file_name: &str = file_path.file_name().expect("there should always be a file name");
@@ -342,22 +343,26 @@ fn main() -> anyhow::Result<()> {
 
                 // this new in-memory PCF has only the elements listed in elements_to_extract, with element references
                 // fixed to match any changes in indices.
-                let pcf = pcf::Pcf::builder()
+                let new_pcf = pcf::Pcf::builder()
                     .version(pcf.version)
                     .strings(pcf.strings.clone())
                     .elements(new_elements)
                     .build();
 
-                let count_of_same_target_pcf = processed_target_pcf_paths.get(target_pcf_path).map_or(0, Vec::len);
-                let output_path = format!("{target_pcf_path}{count_of_same_target_pcf}");
-                let output_path = app.particles_working_dir.join(output_path);
+                processed_target_pcf_paths.entry(target_pcf_path).or_default().push(new_pcf);
+            }
+        }
 
-                let file = OpenOptions::new().create_new(true).write(true).open(output_path)?;
-                let mut file = BufWriter::new(file);
-                if let Err(err) = pcf.encode(&mut file) {
-                    eprintln!("There was an error writing a PCF: {err}");
-                    process::exit(1);
-                }
+        // 
+        for (target_pcf_path, mut pcf_files) in processed_target_pcf_paths {
+            let target_pcf_elements = app.pcf_to_particle_system.get(target_pcf_path).expect("The target_pcf_path is sourced from the particle system map, so this should never happen");
+            let target_pcf_elements: OrderSet<&CString> = target_pcf_elements.iter().collect();
+
+            // TODO: get duplicate elements among pcf_files
+
+            let mut merged_pcf = pcf_files.pop().expect("therre should be at least one pcf in the group");
+            for pcf in pcf_files {
+                merged_pcf = merged_pcf.merge(pcf).expect("failed to merge pcf");
             }
         }
     }
