@@ -41,6 +41,15 @@ pub struct Extracted {
 }
 
 impl Extracted {
+    /// parses the contents of an extracted addon into an [`Addon`].
+    ///
+    /// # Errors
+    ///
+    /// May return [`Err`] if:
+    ///
+    /// - iterating over extracted files fails
+    /// - some [`std::io::Error`] when opening or reading files
+    /// - the addon contains invalid or inoperable parts, such as a corrupted PCF.
     pub fn parse_content(self) -> anyhow::Result<Addon> {
         let mut particle_files = HashMap::new();
         let particles_path = self.content_path.join_checked("particles")?;
@@ -62,13 +71,7 @@ impl Extracted {
 }
 
 #[derive(Debug)]
-pub enum Source {
-    Folder(Utf8PlatformPathBuf),
-    // TODO: support .zip, .tar, .tar.br, .tar.bz2, .tar.gz, .tar.lzma, etc
-    Vpk(Utf8PlatformPathBuf),
-}
-
-#[derive(Debug)]
+/// A collection of all sources read with [`Sources::read_dir`].
 pub struct Sources {
     pub sources: Box<[Source]>,
     pub failures: Box<[(PathBuf, Error)]>,
@@ -101,6 +104,16 @@ impl Sources {
         // let addons_glob = addons_glob.to_str().expect("this should never happen");
         // glob(addons_glob)?.map(|path| Source::from_path(&path?)).collect()
     }
+}
+
+#[derive(Debug)]
+/// An addon source. Points to a folder or supported archive file like a VPK.
+///
+/// See [`Sources::read_dir`] to read sources from a directory.
+pub enum Source {
+    Folder(Utf8PlatformPathBuf),
+    // TODO: support .zip, .tar, .tar.br, .tar.bz2, .tar.gz, .tar.lzma, etc
+    Vpk(Utf8PlatformPathBuf),
 }
 
 #[derive(Debug, Error)]
@@ -145,6 +158,8 @@ impl Source {
     /// of the source.
     ///
     /// For example, if the Source points to a file `/path/to/addon.vpk` then the subfolder will be `{parent}/addon.vpk/`.
+    ///
+    /// Returns [`Extracted`] pointing to the extracted contents.
     ///
     /// ## Errors
     ///
