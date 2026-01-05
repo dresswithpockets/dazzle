@@ -114,6 +114,16 @@ pub enum Error {
 }
 
 impl Source {
+    /// Evaluates the `source` path to determine the [`Source`] type.
+    /// 
+    /// Can be one of:
+    /// 
+    /// - folder
+    /// - vpk
+    /// 
+    /// ## Errors
+    /// 
+    /// - [`Error::UnsupportedAddonType`] if the path points to an addon that doesn't exist, or is not one of the supported types.
     pub fn from_path(source: &std::path::Path) -> Result<Source, Error> {
         let metadata = fs::metadata(source)?;
         let source = std_to_typed(source)?;
@@ -129,6 +139,20 @@ impl Source {
         }
     }
 
+    /// Copies the contents of the source into a subfolder under [`parent`]. The subfolder will be named after the name
+    /// of the source.
+    /// 
+    /// For example, if the Source points to a file `/path/to/addon.vpk` then the subfolder will be `{parent}/addon.vpk/`.
+    /// 
+    /// ## Errors
+    /// 
+    /// Errors if:
+    /// 
+    /// - the source is missing a file or directory name
+    /// - a valid subfolder path couldn't be formed
+    /// - `parent` doesn't exist
+    /// - the destination subfolder already exists
+    /// - there was an error extracting the source's contents, e.g. not enough permissions to write to the folder
     pub fn extract_as_subfolder_in(&self, parent: &Utf8PlatformPath) -> anyhow::Result<Extracted> {
         let source_path = match self {
             Source::Folder(source_path) | Source::Vpk(source_path) => source_path,
