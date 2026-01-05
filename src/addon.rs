@@ -77,8 +77,8 @@ impl Sources {
     /// 
     /// ## Errors
     /// 
-    /// See [`fs::read_dir`] for potential terminal errors. Some failures won't result in [Err]. The resulting 
-    /// [Sources::failures] will contain information about each entry in `addons_dir` that produced an error.
+    /// See [`fs::read_dir`] for potential terminal errors. Some failures won't result in [Err]: The resulting 
+    /// [`Sources::failures`] will contain information about each entry in `addons_dir` that produced an error.
     pub fn read_dir(addons_dir: impl AsRef<Path>) -> Result<Sources, Error> {
         let mut sources = Vec::new();
         let mut failures = Vec::new();
