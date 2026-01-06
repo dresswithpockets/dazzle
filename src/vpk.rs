@@ -48,7 +48,7 @@ pub trait PatchVpkExt {
     /// 
     /// Returns [`Err`] if:
     /// 
-    /// - There was an error when searching the backup_dir
+    /// - There was an error when searching the `backup_dir`
     /// - There was an error forming a string path for a PCF
     fn restore_particles(&mut self, backup_dir: impl AsRef<Path>) -> anyhow::Result<()>;
 }
