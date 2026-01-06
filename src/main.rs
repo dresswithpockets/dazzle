@@ -33,7 +33,7 @@ pub mod vpk;
 use std::{
     cell::LazyCell,
     collections::{BTreeMap, HashMap},
-    ffi::CString,
+    ffi::{CStr, CString},
     fs::{self, File},
     io::{self},
     path::PathBuf,
@@ -43,7 +43,7 @@ use std::{
 
 use directories::ProjectDirs;
 use ordermap::{OrderMap, OrderSet};
-use pcf::Pcf;
+use pcf::{Element, Pcf};
 use single_instance::SingleInstance;
 use typed_path::Utf8PlatformPathBuf;
 
@@ -351,8 +351,6 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        // TODO: create lazy-loaded PCFs of the PCF files keyed in particle_system_map.json
-
         //
         for (target_pcf_path, mut pcf_files) in processed_target_pcf_paths {
             let target_pcf_elements = app
@@ -361,12 +359,14 @@ fn main() -> anyhow::Result<()> {
                 .expect("The target_pcf_path is sourced from the particle system map, so this should never happen");
             let target_pcf_elements: OrderSet<&CString> = target_pcf_elements.iter().collect();
 
-            // TODO: get duplicate elements among pcf_files
+            // We took care of duplicate elements from our addon when grouping addon elements by vanilla PCF, so we
+            // don't do any special handling for duplicate elements here.
 
-            let mut merged_pcf = pcf_files.pop().expect("therre should be at least one pcf in the group");
-            for pcf in pcf_files {
-                merged_pcf = merged_pcf.merge(pcf).expect("failed to merge pcf");
-            }
+            let merged_pcf = pcf_files.pop().expect("there should be at least one pcf in the group");
+            let merged_pcf = pcf_files
+                .into_iter()
+                .try_fold(merged_pcf, Pcf::merge)
+                .expect("failed to merge addon PCFs");
 
             // Our merged PCF may be missing some elements in present in the vanilla PCF, so we lazily decode the
             // target vanilla PCF and merge it in.
@@ -382,9 +382,25 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
-            merged_pcf = merged_pcf
+            let merged_pcf = merged_pcf
                 .merge(target_pcf)
                 .expect("failed to merge the vanilla PCF into the modified PCF");
+
+            // item_fx.pcf is a special case, its elements will get split up into item_fx_unusuals.pcf and into
+            // item_fx_gameplay.pcf
+            // TODO:
+            // let processed_pcfs = if target_pcf_path == "item_fx.pcf" {
+            //     let (unusual_elements, gameplay_elements): (Vec<_>, Vec<_>) = merged_pcf.elements.iter().partition(|el| el.name == c"superare_balloon" || cstr_starts_with(&el.name, c"superrare_") || cstr_starts_with(&el.name, c"unusual_"));
+
+            //     // after partitioning, gameplay_elements is going to have a root element with incorrect element indices
+            //     // and unusual_elements will have no root element.
+            //     let unusual_elements = reindex_elements(&merged_pcf, unusual_elements);
+            //     let gameplay_elements = reindex_elements(&merged_pcf, gameplay_elements);
+
+            // } else {
+            //     vec![merged_pcf]
+            // }
+            
         }
     }
 
@@ -407,6 +423,10 @@ fn main() -> anyhow::Result<()> {
     // TODO: process and patch particles into main VPK, handling duplicate effects
 
     Ok(())
+}
+
+fn cstr_starts_with(string: &CStr, prefix: &CStr) -> bool {
+    string.to_bytes().starts_with(prefix.to_bytes())
 }
 
 fn reindex_elements<'a>(
