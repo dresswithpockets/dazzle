@@ -361,7 +361,7 @@ impl<'a, R: std::io::BufRead> Iterator for AttributeIterator<'a, R> {
             self.current_attribute += 1;
             match self.reader.read_attribute() {
                 Ok((name_idx, attribute)) => Some(Ok((self.current_element, name_idx, attribute))),
-                Err(err) => Some(Err(err.into())),
+                Err(err) => Some(Err(err)),
             }
         } else if self.current_element == self.element_count - 1 {
             // this was the last element, so there are no more attributes
