@@ -275,60 +275,6 @@ impl Pcf {
             });
         }
 
-        // for other_element in other.elements.into_iter().skip(1) {
-        //     if let Some(element_idx) = elements_by_name.get(&other_element.name) {
-        //         // TODO: remap conflicting element to new one.
-        //         continue;
-        //     }
-
-        //     // string indices may have changed, so we're remapping to the new index
-        //     let new_type_idx = *other_to_self_string_idx
-        //         .get(&other_element.type_idx)
-        //         .expect("the element's type_idx should always match a value in the Pcf's string list");
-
-        //     // when we merge in another PCF's elements, we are basically just appending all new elements to our elements.
-        //     // the incoming PCF's elements references will be incorrect - because the indices have been offset by the
-        //     // elements already in our list. So, we have to fixup every name index and element reference for each
-        //     // attribute in each incoming element.
-        //     let new_attributes = other_element.attributes.into_iter().map(|(name_idx, attribute)| {
-        //         let name_idx = *other_to_self_string_idx
-        //             .get(&name_idx)
-        //             .expect("the attribute's name_idx should always match a value in the Pcf's string list");
-
-        //         let attribute = match attribute {
-        //             Attribute::Element(value) if value != u32::MAX => Attribute::Element(value + element_offset),
-        //             Attribute::ElementArray(mut items) => {
-        //                 for item in items.iter_mut() {
-        //                     if *item == u32::MAX {
-        //                         continue;
-        //                     }
-
-        //                     *item += element_offset;
-        //                 }
-
-        //                 Attribute::ElementArray(items)
-        //             }
-        //             attribute => attribute,
-        //         };
-
-        //         (name_idx, attribute)
-        //     });
-
-        //     let new_element = Element {
-        //         type_idx: new_type_idx,
-        //         attributes: new_attributes.collect(),
-        //         ..other_element
-        //     };
-
-        //     elements.push(new_element);
-
-        //     // when adding a new DmeParticleSystemDefinition element, we need to make sure the root node's
-        //     // particleSystemDefinitions list is updated with the new element references
-        //     if new_type_idx == system_name_idx {
-        //         new_system_indices.push(elements.len() as u32 - 1)
-        //     }
-        // }
-
         // making sure that our merged PCF contains references for all new particle system definitions
         let root_element = elements.get_mut(0).expect("there should always be a root element");
         root_element
