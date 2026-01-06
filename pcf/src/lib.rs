@@ -23,6 +23,7 @@
 #![feature(read_array)]
 #![feature(trim_prefix_suffix)]
 #![feature(associated_type_defaults)]
+#![feature(error_generic_member_access)]
 
 pub mod attribute;
 pub mod pcf;

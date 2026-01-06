@@ -1,4 +1,4 @@
-use std::{ffi::CString, hash::Hash, io, vec};
+use std::{backtrace::Backtrace, ffi::CString, hash::Hash, io, vec};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use derive_more::{From, Into};
@@ -339,8 +339,12 @@ impl<'a, W: io::Write> AttributeWriter<'a, W> {
 
 #[derive(Debug, Error)]
 pub enum ReadError {
-    #[error(transparent)]
-    Io(#[from] io::Error),
+    #[error("{source}")]
+    Io {
+        #[from]
+        source: io::Error,
+        backtrace: Backtrace,
+    },
 
     #[error(transparent)]
     CStringFromVec(#[from] std::ffi::FromVecWithNulError),
@@ -350,12 +354,15 @@ pub enum ReadError {
 }
 
 impl<'a, R: std::io::BufRead> Iterator for AttributeIterator<'a, R> {
-    type Item = Result<(NameIndex, Attribute), ReadError>;
+    type Item = Result<(usize, NameIndex, Attribute), ReadError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_attribute < self.current_attribute_count {
             self.current_attribute += 1;
-            Some(self.reader.read_attribute())
+            match self.reader.read_attribute() {
+                Ok((name_idx, attribute)) => Some(Ok((self.current_element, name_idx, attribute))),
+                Err(err) => Some(Err(err.into())),
+            }
         } else if self.current_element == self.element_count - 1 {
             // this was the last element, so there are no more attributes
             None
@@ -368,14 +375,14 @@ impl<'a, R: std::io::BufRead> Iterator for AttributeIterator<'a, R> {
                     self.current_attribute_count = value as usize;
                     self.next()
                 }
-                Err(err) => Some(Err(ReadError::Io(err))),
+                Err(err) => Some(Err(err.into())),
             }
         }
     }
 }
 
 impl<'a, R: std::io::BufRead> IntoIterator for AttributeReader<'a, R> {
-    type Item = Result<(NameIndex, Attribute), ReadError>;
+    type Item = Result<(usize, NameIndex, Attribute), ReadError>;
 
     type IntoIter = AttributeIterator<'a, R>;
 

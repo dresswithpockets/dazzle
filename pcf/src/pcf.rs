@@ -9,10 +9,11 @@ use std::{
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use either::Either::{self, Left, Right};
-use ordermap::{OrderMap, OrderSet};
+use itertools::Itertools;
+use ordermap::OrderMap;
 use thiserror::Error;
 
-use crate::attribute::{self, Attribute, AttributeReader, AttributeWriter, NameIndex, ReadError};
+use crate::attribute::{self, Attribute, AttributeReader, AttributeWriter, NameIndex};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Version {
@@ -77,10 +78,13 @@ pub struct Element {
 }
 
 #[derive(Debug, Clone)]
-/// A Valve Particles Config File.
+/// A Valve Particles Config File. These are DMX files with certain constraints:
+///
+/// - there is always a root element with an Element Array referencing every partical system
+/// - all elements are either a particle system, or a child element of a particle system's definition tree
 pub struct Pcf {
     pub version: Version,
-    pub strings: Vec<CString>,
+    pub strings: OrderMap<CString, ()>,
     pub elements: Vec<Element>,
     elements_by_name: HashMap<CString, u32>,
 }
@@ -99,30 +103,20 @@ pub enum MergeError {
         "our strings list is missing 'DmeParticleSystemDefinition'. Adding this string may require elements to be fixed up."
     )]
     SelfIsMissingSystemDefinitionString,
-
-    #[error(
-        "other's strings list is missing 'particleSystemDefinitions'. Adding this string may require elements to be fixed up."
-    )]
-    OtherIsMissingRootDefinitionsString,
-
-    #[error(
-        "other's strings list is missing 'DmeParticleSystemDefinition'. Adding this string may require elements to be fixed up."
-    )]
-    OtherIsMissingSystemDefinitionString,
 }
 
 impl Pcf {
     pub fn new(version: Version) -> Pcf {
         Pcf {
             version,
-            strings: Vec::new(),
+            strings: OrderMap::new(),
             elements: Vec::new(),
             elements_by_name: HashMap::new(),
         }
     }
 
     pub fn get_element_type(&self, element: &Element) -> Option<&CString> {
-        self.strings.get(element.type_idx as usize)
+        self.strings.get_index(element.type_idx as usize).map(|el| el.0)
     }
 
     pub fn get_element(&self, name: &CString) -> Option<&Element> {
@@ -175,91 +169,195 @@ impl Pcf {
         Some(visited)
     }
 
+    pub fn merge_excluding_elements<'a>(
+        self,
+        other: Pcf,
+        elements: impl IntoIterator<Item = &'a String>,
+    ) -> Result<Self, MergeError> {
+        todo!();
+    }
+
+    /// Merges all of `other`'s particle system definitions & their dependent elements with `self`.
+    ///
+    /// If an element in `other` has a name that matches an element already in `self`, then it is skipped. Any
+    /// references to the element from `other` are updated to point to the element in `self` instead.
+    ///
+    /// ## Errors
+    ///
+    /// Errors if there was an issue merging the objects together. See [`MergeError`].
+    pub fn merge_particle_systems(self, other: Pcf) -> Result<Self, MergeError> {
+        todo!();
+    }
+
+    pub fn filter_merge<F>(self, other: Pcf, predicate: F)
+    where
+        F: Fn(&Element) -> bool,
+    {
+        todo!();
+    }
+
+    /// Merges the contents of `self` and `other` together.
+    ///
+    /// Strings and elements are moved into the merged [`Pcf`]. Duplicate strings are skipped and references to skipped
+    /// strings will be updated to use the first one.
+    ///
+    /// If a particle system definition in `other` has a name that matches an element already in `self`, then it is
+    /// skipped. Any references to that particle system definition are updated to point to the element in `self` instead.
+    /// If an element in `other` has a name that matches an element already in `self`, then it is skipped. Any
+    /// references to the element from `other` are updated to point to the element in `self` instead.
+    ///
+    /// ## Errors
+    ///
+    /// Errors if there was an issue merging the objects together. See [`MergeError`].
     pub fn merge(self, other: Pcf) -> Result<Self, MergeError> {
         if other.version != self.version {
             return Err(MergeError::VersionMismatch(other.version, self.version));
         }
 
-        let mut strings: OrderMap<CString, ()> = self.strings.into_iter().map(|value| (value, ())).collect();
-        let other_strings: OrderSet<CString> = other.strings.into_iter().collect();
+        let mut strings = self.strings;
 
         // The PCF format is based on DMX, so there are no guarantees that the strings list will be identical between
         // two PCF files. Its possible to have new strings, or strings that have changed position. So, we create a
         // map here to convert from incoming string index to merged string index.
         //
         // We also add any new strings from `other` into `self.strings` here.
-        let mut other_to_self_string_idx: HashMap<TypeIndex, TypeIndex> = HashMap::new();
-        for (other_idx, other_string) in other_strings.into_iter().enumerate() {
+        let mut other_to_new_string_idx = HashMap::new();
+        for (other_idx, (other_string, _)) in other.strings.into_iter().enumerate() {
             let mapped_idx = strings.entry(other_string).insert_entry(()).index();
-            other_to_self_string_idx.insert(other_idx as TypeIndex, mapped_idx as TypeIndex);
+            other_to_new_string_idx.insert(other_idx as TypeIndex, mapped_idx as TypeIndex);
         }
 
-        let Some(root_definitions_name_idx) = strings.iter().position(|(el, _)| el == c"particleSystemDefinitions")
-        else {
-            return Err(MergeError::SelfIsMissingRootDefinitionsString);
-        };
+        let root_definitions_name_idx = strings
+            .iter()
+            .position(|(el, _)| el == c"particleSystemDefinitions")
+            .ok_or(MergeError::SelfIsMissingRootDefinitionsString)?
+            as NameIndex;
 
-        let Some(system_name_idx) = strings.iter().position(|(el, _)| el == c"DmeParticleSystemDefinition") else {
-            return Err(MergeError::SelfIsMissingSystemDefinitionString);
-        };
+        let system_name_idx = strings
+            .iter()
+            .position(|(el, _)| el == c"DmeParticleSystemDefinition")
+            .ok_or(MergeError::SelfIsMissingSystemDefinitionString)? as NameIndex;
 
-        let root_definitions_name_idx = root_definitions_name_idx as NameIndex;
-        let system_name_idx = system_name_idx as NameIndex;
+        // other's elements may have attributes which refer to indices of other's elements. We'll sum those
+        // references with this element_offset as we add them to the combined elements list, to make sure the
+        // references stay intact.
+        let element_offset = self.elements.len() as u32;
 
-        let mut new_elements = Vec::with_capacity(self.elements.len() + other.elements.len());
+        let mut elements_by_name = self.elements_by_name;
+
+        // we only want to add elements which aren't already present in self. This will break refernces to elements
+        // that are filtered out, so later we'll reindex element references as we add them to our combined list
+        let mut filtered_other_elements = Vec::new();
+        let mut other_to_new_element_idx = HashMap::new();
+        for (other_idx, other_element) in other.elements.into_iter().enumerate() {
+            if let Some(new_idx) = elements_by_name.get(&other_element.name).copied() {
+                other_to_new_element_idx.insert(other_idx as u32, new_idx);
+                continue;
+            }
+
+            filtered_other_elements.push(other_element);
+        }
+
         let mut new_system_indices = Vec::new();
-        for other_element in other.elements.into_iter().skip(1) {
+        let mut elements = self.elements;
+        elements.reserve_exact(filtered_other_elements.len());
+
+        for other_element in filtered_other_elements {
             // string indices may have changed, so we're remapping to the new index
-            let new_type_idx = *other_to_self_string_idx
+            let type_idx = *other_to_new_string_idx
                 .get(&other_element.type_idx)
                 .expect("the element's type_idx should always match a value in the Pcf's string list");
+
+            let new_element_idx = elements.len() as u32;
+            elements_by_name.insert(other_element.name.clone(), new_element_idx);
+
+            // when adding a new DmeParticleSystemDefinition element, we need to make sure the root node's
+            // particleSystemDefinitions list is updated with the new element references
+            if type_idx == system_name_idx {
+                new_system_indices.push(new_element_idx)
+            }
 
             // when we merge in another PCF's elements, we are basically just appending all new elements to our elements.
             // the incoming PCF's elements references will be incorrect - because the indices have been offset by the
             // elements already in our list. So, we have to fixup every name index and element reference for each
             // attribute in each incoming element.
-            let new_attributes = other_element.attributes.into_iter().map(|(name_idx, attribute)| {
-                let name_idx = *other_to_self_string_idx
-                    .get(&name_idx)
-                    .expect("the attribute's name_idx should always match a value in the Pcf's string list");
+            let attributes: OrderMap<_, _> = other_element
+                .attributes
+                .into_iter()
+                .map(|(name_idx, attribute)| {
+                    Self::reindex_other_attribute(
+                        element_offset,
+                        &other_to_new_string_idx,
+                        &other_to_new_element_idx,
+                        name_idx,
+                        attribute,
+                    )
+                })
+                .collect();
 
-                let element_offset = self.elements.len() as u32;
-                let attribute = match attribute {
-                    Attribute::Element(value) if value != u32::MAX => Attribute::Element(value + element_offset),
-                    Attribute::ElementArray(mut items) => {
-                        for item in items.iter_mut() {
-                            if *item == u32::MAX {
-                                continue;
-                            }
-
-                            *item += element_offset;
-                        }
-
-                        Attribute::ElementArray(items)
-                    }
-                    attribute => attribute,
-                };
-
-                (name_idx, attribute)
-            });
-
-            let new_element = Element {
-                type_idx: new_type_idx,
-                attributes: new_attributes.collect(),
+            elements.push(Element {
+                type_idx,
+                attributes,
                 ..other_element
-            };
-
-            new_elements.push(new_element);
-
-            // when adding a new DmeParticleSystemDefinition element, we need to make sure the root node's
-            // particleSystemDefinitions list is updated with the new element references
-            if new_type_idx == system_name_idx {
-                new_system_indices.push(new_elements.len() as u32 - 1)
-            }
+            });
         }
 
+        // for other_element in other.elements.into_iter().skip(1) {
+        //     if let Some(element_idx) = elements_by_name.get(&other_element.name) {
+        //         // TODO: remap conflicting element to new one.
+        //         continue;
+        //     }
+
+        //     // string indices may have changed, so we're remapping to the new index
+        //     let new_type_idx = *other_to_self_string_idx
+        //         .get(&other_element.type_idx)
+        //         .expect("the element's type_idx should always match a value in the Pcf's string list");
+
+        //     // when we merge in another PCF's elements, we are basically just appending all new elements to our elements.
+        //     // the incoming PCF's elements references will be incorrect - because the indices have been offset by the
+        //     // elements already in our list. So, we have to fixup every name index and element reference for each
+        //     // attribute in each incoming element.
+        //     let new_attributes = other_element.attributes.into_iter().map(|(name_idx, attribute)| {
+        //         let name_idx = *other_to_self_string_idx
+        //             .get(&name_idx)
+        //             .expect("the attribute's name_idx should always match a value in the Pcf's string list");
+
+        //         let attribute = match attribute {
+        //             Attribute::Element(value) if value != u32::MAX => Attribute::Element(value + element_offset),
+        //             Attribute::ElementArray(mut items) => {
+        //                 for item in items.iter_mut() {
+        //                     if *item == u32::MAX {
+        //                         continue;
+        //                     }
+
+        //                     *item += element_offset;
+        //                 }
+
+        //                 Attribute::ElementArray(items)
+        //             }
+        //             attribute => attribute,
+        //         };
+
+        //         (name_idx, attribute)
+        //     });
+
+        //     let new_element = Element {
+        //         type_idx: new_type_idx,
+        //         attributes: new_attributes.collect(),
+        //         ..other_element
+        //     };
+
+        //     elements.push(new_element);
+
+        //     // when adding a new DmeParticleSystemDefinition element, we need to make sure the root node's
+        //     // particleSystemDefinitions list is updated with the new element references
+        //     if new_type_idx == system_name_idx {
+        //         new_system_indices.push(elements.len() as u32 - 1)
+        //     }
+        // }
+
         // making sure that our merged PCF contains references for all new particle system definitions
-        let root_element = new_elements.get_mut(0).expect("there should always be a root element");
+        let root_element = elements.get_mut(0).expect("there should always be a root element");
         root_element
             .attributes
             .entry(root_definitions_name_idx)
@@ -275,13 +373,13 @@ impl Pcf {
 
         Ok(Pcf {
             version: self.version,
-            strings: strings.into_iter().map(|(string, _)| string).collect(),
-            elements_by_name: new_elements
+            strings,
+            elements_by_name: elements
                 .iter()
                 .enumerate()
                 .map(|(idx, el)| (el.name.clone(), idx as u32))
                 .collect(),
-            elements: new_elements,
+            elements,
         })
     }
 
@@ -299,12 +397,53 @@ impl Pcf {
     pub fn builder_from(pcf: &Pcf) -> PcfBuilder<Version, IncompleteStrings, IncompleteElements> {
         PcfBuilder {
             version: pcf.version,
-            strings: pcf.strings.clone(),
+            strings: pcf.strings.iter().map(|el| el.0.clone()).collect(),
             elements: pcf.elements.clone(),
             elements_by_name: pcf.elements_by_name.clone(),
             _phantom_elements: PhantomData,
             _phantom_strings: PhantomData,
         }
+    }
+
+    fn reindex_other_attribute(
+        element_offset: u32,
+        other_to_new_string_idx: &HashMap<u16, u16>,
+        other_to_new_element_idx: &HashMap<u32, u32>,
+        name_idx: NameIndex,
+        attribute: Attribute,
+    ) -> (NameIndex, Attribute) {
+        let name_idx = other_to_new_string_idx
+            .get(&name_idx)
+            .copied()
+            .expect("the attribute's name_idx should always match a value in the Pcf's string list");
+
+        let attribute = match attribute {
+            Attribute::Element(value) if value != u32::MAX => {
+                let new_idx = other_to_new_element_idx
+                    .get(&value)
+                    .copied()
+                    .unwrap_or(value + element_offset);
+
+                Attribute::Element(new_idx)
+            }
+            Attribute::ElementArray(mut items) => {
+                for item in items.iter_mut() {
+                    if *item == u32::MAX {
+                        continue;
+                    }
+
+                    *item = other_to_new_element_idx
+                        .get(item)
+                        .copied()
+                        .unwrap_or(*item + element_offset);
+                }
+
+                Attribute::ElementArray(items)
+            }
+            attribute => attribute,
+        };
+
+        (name_idx, attribute)
     }
 }
 
@@ -338,7 +477,7 @@ impl PcfBuilder<Version, Strings, Elements> {
     pub fn build(self) -> Pcf {
         Pcf {
             version: self.version,
-            strings: self.strings,
+            strings: self.strings.into_iter().map(|el| (el, ())).collect(),
             elements: self.elements,
             elements_by_name: self.elements_by_name,
         }
@@ -553,11 +692,11 @@ impl Pcf {
         Ok(version)
     }
 
-    fn read_strings(file: &mut impl std::io::BufRead) -> Result<Vec<CString>, Error> {
+    fn read_strings(file: &mut impl std::io::BufRead) -> Result<OrderMap<CString, ()>, Error> {
         let string_count = file.read_u16::<LittleEndian>()? as usize;
-        let mut strings = Vec::with_capacity(string_count);
+        let mut strings = OrderMap::with_capacity(string_count);
         for _ in 0..string_count {
-            strings.push(Self::read_terminated_string(file)?)
+            strings.insert(Self::read_terminated_string(file)?, ());
         }
 
         Ok(strings)
@@ -579,10 +718,11 @@ impl Pcf {
             });
         }
 
-        for element in &mut elements {
-            let reader = AttributeReader::try_from(file, element_count)?.into_iter();
-            let attributes: Result<OrderMap<NameIndex, Attribute>, ReadError> = reader.collect();
-            element.attributes = attributes?;
+        let attributes: Result<Vec<_>, _> = AttributeReader::try_from(file, element_count)?.into_iter().collect();
+        let attributes = attributes?.into_iter().chunk_by(|el| el.0);
+        for (element_idx, group) in attributes.into_iter() {
+            let element = elements.get_mut(element_idx).expect("this should never happen");
+            element.attributes = group.map(|el| (el.1, el.2)).collect();
         }
 
         Ok(elements)
@@ -606,10 +746,10 @@ impl Pcf {
         Ok(())
     }
 
-    fn write_strings(strings: &Vec<CString>, file: &mut impl std::io::Write) -> anyhow::Result<()> {
+    fn write_strings(strings: &OrderMap<CString, ()>, file: &mut impl std::io::Write) -> anyhow::Result<()> {
         file.write_u16::<LittleEndian>(strings.len() as u16)?;
 
-        for string in strings {
+        for (string, _) in strings {
             file.write_all(string.to_bytes_with_nul())?;
         }
 
@@ -647,9 +787,9 @@ mod tests {
         assert_eq!(pcf.strings.len(), 231);
 
         // spot checking a few random strings to ensure they're correct
-        assert_eq!(pcf.strings[79], CString::from(c"rotation_offset_max"));
-        assert_eq!(pcf.strings[160], CString::from(c"end time max"));
-        assert_eq!(pcf.strings[220], CString::from(c"warp max"));
+        assert_eq!(pcf.strings.keys()[79], c"rotation_offset_max");
+        assert_eq!(pcf.strings.keys()[160], c"end time max");
+        assert_eq!(pcf.strings.keys()[220], c"warp max");
 
         assert_eq!(pcf.elements.len(), 2028);
 
