@@ -27,10 +27,16 @@
 #![warn(clippy::pedantic)]
 
 use std::{
-    cell::LazyCell, collections::{BTreeMap, HashMap}, ffi::CString, fs::{self, File, OpenOptions}, io::{self, BufReader, BufWriter, Seek, SeekFrom}, ops::Deref, path::{Path, PathBuf}, process, str::FromStr
+    cell::LazyCell,
+    collections::{BTreeMap, HashMap},
+    ffi::CString,
+    fs::{self, File, OpenOptions},
+    io::{self, BufReader, BufWriter, Seek, SeekFrom},
+    path::{Path, PathBuf},
+    process,
+    str::FromStr,
 };
 
-use anyhow::anyhow;
 use directories::ProjectDirs;
 use glob::glob;
 use ordermap::{OrderMap, OrderSet};
@@ -243,21 +249,23 @@ fn main() -> anyhow::Result<()> {
 
     let mut vanilla_particles = HashMap::new();
     for pcf_path in app.pcf_to_particle_system.keys() {
-        vanilla_particles.insert(pcf_path, LazyCell::new(|| -> anyhow::Result<Pcf>  {
-            let pcf_path = app.backup_dir.join_checked(pcf_path.clone())?;
-            let mut reader = File::open_buffered(pcf_path)?;
-            Ok(Pcf::decode(&mut reader)?)
-        }));
+        vanilla_particles.insert(
+            pcf_path,
+            LazyCell::new(|| -> anyhow::Result<Pcf> {
+                let pcf_path = app.backup_dir.join_checked(pcf_path.clone())?;
+                let mut reader = File::open_buffered(pcf_path)?;
+                Ok(Pcf::decode(&mut reader)?)
+            }),
+        );
     }
 
     // create intermediary split-up PCF files by cross referencing our addon PCFs with the particle_system_map.json
     for addon in &addons {
-
         /*
-            in a copy of vanilla tf2, there are many PCFs containing particle system definitions. Except in a couple 
+            in a copy of vanilla tf2, there are many PCFs containing particle system definitions. Except in a couple
             cases, each particle system is only defined once across all PCFs. particle_system_map.json maps the path to
             a PCF to a list of all particle systems defined in that PCF.
-        
+
             the goal of the following code is to produce new versions of the vanilla PCFs with any modified particle
             system definitions overwritten in each PCF.
         */
@@ -296,7 +304,7 @@ fn main() -> anyhow::Result<()> {
 
             for (target_pcf_path, matched_elements) in elements_by_vanilla_pcf_path {
                 // matched_elements contains a subset of the original elements in the pcf. As a result, any
-                // Element or ElementArray attributes may not point to the correct index - the order is 
+                // Element or ElementArray attributes may not point to the correct index - the order is
                 // retained but the indices aren't. So, we need to reindex any references to other elements in the set.
                 let mut new_elements = reindex_elements(pcf, matched_elements);
 
@@ -305,7 +313,7 @@ fn main() -> anyhow::Result<()> {
                 // our particle system definitions, so we need to update the root element's list with the new indices.
                 let mut particle_system_indices = Vec::new();
                 for (element_idx, element) in new_elements.iter().enumerate().skip(1) {
-                    let Some((type_name, _)) = pcf.strings.get_index(element.type_idx as usize) else {
+                    let Some((type_name, ())) = pcf.strings.get_index(element.type_idx as usize) else {
                         continue;
                     };
 
@@ -355,17 +363,21 @@ fn main() -> anyhow::Result<()> {
 
             // Our merged PCF may be missing some elements in present in the vanilla PCF, so we lazily decode the
             // target vanilla PCF and merge it in.
-            let target_pcf = vanilla_particles.get(target_pcf_path).expect("The target_pcf_path is sourced from the particle system map, so this should never happen");
+            let target_pcf = vanilla_particles
+                .get(target_pcf_path)
+                .expect("The target_pcf_path is sourced from the particle system map, so this should never happen");
             let target_pcf = &**target_pcf;
             let target_pcf = match target_pcf {
                 Ok(pcf) => pcf.to_owned(),
                 Err(err) => {
                     eprintln!("Error retrieving decoded PCF for a vanilla PCF file: {err}");
                     continue;
-                },
+                }
             };
 
-            merged_pcf = merged_pcf.merge(target_pcf).expect("failed to merge the vanilla PCF into the modified PCF");
+            merged_pcf = merged_pcf
+                .merge(target_pcf)
+                .expect("failed to merge the vanilla PCF into the modified PCF");
         }
     }
 
@@ -390,13 +402,20 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn reindex_elements<'a>(source_pcf: &'a Pcf, elements: impl IntoIterator<Item = &'a pcf::Element>) -> Vec<pcf::Element> {
+fn reindex_elements<'a>(
+    source_pcf: &'a Pcf,
+    elements: impl IntoIterator<Item = &'a pcf::Element>,
+) -> Vec<pcf::Element> {
     let mut buf = Vec::new();
     reindex_elements_onto_vec(source_pcf, elements, &mut buf);
     buf
 }
 
-fn reindex_elements_onto_vec<'a>(source_pcf: &'a Pcf, elements: impl IntoIterator<Item = &'a pcf::Element>, vec: &mut Vec<pcf::Element>) {
+fn reindex_elements_onto_vec<'a>(
+    source_pcf: &'a Pcf,
+    elements: impl IntoIterator<Item = &'a pcf::Element>,
+    vec: &mut Vec<pcf::Element>,
+) {
     let offset = vec.len();
 
     let mut original_elements: BTreeMap<u32, &pcf::Element> = BTreeMap::new();
