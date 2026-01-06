@@ -26,12 +26,15 @@
 #![feature(file_buffered)]
 #![warn(clippy::pedantic)]
 
+pub mod addon;
+pub mod vpk;
+
 use std::{
     cell::LazyCell,
     collections::{BTreeMap, HashMap},
     ffi::CString,
-    fs::{self, File, OpenOptions},
-    io::{self, BufReader, BufWriter, Seek, SeekFrom},
+    fs::{self, File},
+    io::{self},
     path::{Path, PathBuf},
     process,
     str::FromStr,
@@ -43,13 +46,10 @@ use ordermap::{OrderMap, OrderSet};
 use pcf::Pcf;
 use relative_path::RelativePathBuf;
 use single_instance::SingleInstance;
-use thiserror::Error;
 use typed_path::Utf8PlatformPathBuf;
-use vpk::VPK;
 
 use crate::addon::Sources;
-
-pub mod addon;
+use crate::vpk::{VPK, PatchVpkExt};
 
 struct App {
     _config_dir: Utf8PlatformPathBuf,
@@ -502,62 +502,9 @@ fn restore_particles_from_backup(misc_vpk: &mut VPK, backup_dir: impl AsRef<Path
         //   /path/to/backup/particles/example.pcf - the actual on-disk path of the backup particle file
         let path_on_disk = particle_file.to_path(backup_dir);
 
-        if let Err(err) = patch_file(misc_vpk, path_in_vpk, &path_on_disk) {
+        if let Err(err) = misc_vpk.patch_file(path_in_vpk, &path_on_disk) {
             eprintln!("Error patching particle file '{particle_file}': {err}");
         }
-    }
-
-    Ok(())
-}
-
-#[derive(Debug, Error)]
-enum PatchError {
-    #[error("file not found in vpk")]
-    NotFound,
-
-    #[error("can't patch file that has preload data")]
-    HasPreloadData,
-
-    #[error("the input file's size ({0} bytes) does not match the file in the vpk archive ({1} bytes)")]
-    MismatchedSizes(u64, u64),
-
-    #[error("only wrote {0} of the expected {1} bytes")]
-    PartialWrite(u64, u64),
-
-    #[error(transparent)]
-    IoError(#[from] io::Error),
-}
-
-/// patches data over an existing entry in the vpk's tree
-fn patch_file(vpk: &mut VPK, path_in_vpk: &str, path_on_disk: &Path) -> Result<(), PatchError> {
-    let entry = vpk.tree.get(path_in_vpk).ok_or(PatchError::NotFound)?;
-
-    if entry.dir_entry.preload_length > 0 {
-        return Err(PatchError::HasPreloadData);
-    }
-
-    let Some(archive_path) = &entry.archive_path else {
-        return Err(PatchError::HasPreloadData);
-    };
-
-    // TODO: what about preload_length? does patch_file need to ever handle preloaded files?
-    let entry_size = u64::from(entry.dir_entry.file_length);
-    let new_file_size = path_on_disk.symlink_metadata()?.len();
-
-    if entry_size != new_file_size {
-        return Err(PatchError::MismatchedSizes(new_file_size, entry_size));
-    }
-
-    let new_file = File::open(path_on_disk)?;
-    let mut new_file = BufReader::new(new_file);
-
-    let archive_file = OpenOptions::new().write(true).open(archive_path.as_ref())?;
-    let mut archive_file = BufWriter::new(archive_file);
-    archive_file.seek(SeekFrom::Start(u64::from(entry.dir_entry.archive_offset)))?;
-
-    let copied = io::copy(&mut new_file, &mut archive_file)?;
-    if copied != entry_size {
-        return Err(PatchError::PartialWrite(copied, entry_size));
     }
 
     Ok(())
