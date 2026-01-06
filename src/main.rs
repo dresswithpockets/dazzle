@@ -382,7 +382,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // ensure we start from a consistent state by restoring the particles in the tf misc vpk back to vanilla content.
-    if let Err(err) = restore_particles_from_backup(&mut misc_vpk, &app.backup_dir) {
+    if let Err(err) = misc_vpk.restore_particles_from_backup(&app.backup_dir) {
         eprintln!("There was an error restoring some or all particles to the vanilla state: {err}");
         process::exit(1);
     }
@@ -475,37 +475,4 @@ fn reindex_elements_onto_vec<'a>(
             attributes,
         });
     }
-}
-
-fn restore_particles_from_backup(misc_vpk: &mut VPK, backup_dir: impl AsRef<Path>) -> anyhow::Result<()> {
-    let backup_dir = backup_dir.as_ref();
-    let particles_glob = backup_dir.to_str().expect("this should never happen").to_string() + "/particles/**/*.pcf";
-    let backup_particle_paths = glob(&particles_glob)?
-        .map(|path| -> anyhow::Result<RelativePathBuf> {
-            let mut path: &Path = &path?;
-            if path.is_absolute() {
-                path = path.strip_prefix(backup_dir)?;
-            }
-
-            Ok(RelativePathBuf::from_path(path)?)
-        })
-        .collect::<anyhow::Result<Vec<RelativePathBuf>>>()?;
-
-    // restore the particles in the misc vpk with our backup, to ensure we're at a clean state
-    for particle_file in backup_particle_paths {
-        // given ./particles/example.pcf, we should map to:
-
-        //   /particles/example.pcf - the path to the file in the VPK
-        let path_in_vpk = particle_file.to_path("/");
-        let path_in_vpk = path_in_vpk.to_str().expect("this should never happen");
-
-        //   /path/to/backup/particles/example.pcf - the actual on-disk path of the backup particle file
-        let path_on_disk = particle_file.to_path(backup_dir);
-
-        if let Err(err) = misc_vpk.patch_file(path_in_vpk, &path_on_disk) {
-            eprintln!("Error patching particle file '{particle_file}': {err}");
-        }
-    }
-
-    Ok(())
 }
