@@ -35,16 +35,14 @@ use std::{
     ffi::CString,
     fs::{self, File},
     io::{self},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process,
     str::FromStr,
 };
 
 use directories::ProjectDirs;
-use glob::glob;
 use ordermap::{OrderMap, OrderSet};
 use pcf::Pcf;
-use relative_path::RelativePathBuf;
 use single_instance::SingleInstance;
 use typed_path::Utf8PlatformPathBuf;
 
@@ -382,7 +380,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // ensure we start from a consistent state by restoring the particles in the tf misc vpk back to vanilla content.
-    if let Err(err) = misc_vpk.restore_particles_from_backup(&app.backup_dir) {
+    if let Err(err) = misc_vpk.restore_particles(&app.backup_dir) {
         eprintln!("There was an error restoring some or all particles to the vanilla state: {err}");
         process::exit(1);
     }
