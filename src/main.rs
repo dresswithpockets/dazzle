@@ -25,6 +25,7 @@
 #![feature(trim_prefix_suffix)]
 #![feature(file_buffered)]
 #![warn(clippy::pedantic)]
+#![feature(push_mut)]
 
 pub mod addon;
 pub mod vpk;
@@ -288,23 +289,29 @@ fn main() -> anyhow::Result<()> {
             #[allow(clippy::cast_possible_truncation)]
             let definitions_name_idx = definitions_name_idx as pcf::NameIndex;
 
-            let mut elements_by_vanilla_pcf_path = HashMap::<&String, OrderSet<&pcf::Element>>::new();
+            let root_element = pcf.elements[0].clone();
+
+            // grouping the elements from our addon by the vanilla PCF they're mapped to in particle_system_map.json.
+            let mut elements_by_vanilla_pcf_path = HashMap::<&String, OrderMap<&CString, &pcf::Element>>::new();
             for element in &pcf.elements {
                 let Some(pcf_path) = app.particle_system_to_pcf.get(&element.name) else {
                     continue;
                 };
 
+                // we're also riding ourselves of duplicate particle systems here. The first one always takes priority,
+                // subsequent particle systems with the same name are skipped entirely.
                 elements_by_vanilla_pcf_path
                     .entry(pcf_path)
                     .or_default()
-                    .insert(element);
+                    .entry(&element.name)
+                    .or_insert(element);
             }
 
             for (target_pcf_path, matched_elements) in elements_by_vanilla_pcf_path {
                 // matched_elements contains a subset of the original elements in the pcf. As a result, any
                 // Element or ElementArray attributes may not point to the correct index - the order is
                 // retained but the indices aren't. So, we need to reindex any references to other elements in the set.
-                let mut new_elements = reindex_elements(pcf, matched_elements);
+                let mut new_elements = reindex_elements(pcf, matched_elements.into_values());
 
                 // the root element always stores an attribute "particleSystemDefinitions" which stores an ElementArray
                 // containing the index of every DmeParticleSystemDefinition-type element. We've changed the indices of
@@ -323,9 +330,11 @@ fn main() -> anyhow::Result<()> {
                     particle_system_indices.push(element_idx as u32);
                 }
 
-                // we've got the new indices now, so we can update the root element's list in-place
-                let root_definitions = new_elements[0].attributes.entry(definitions_name_idx).or_default();
-                *root_definitions = particle_system_indices.into_boxed_slice().into();
+                // our filtered `new_elements` only contains particle systems, it does not contain a root element
+                let new_root = new_elements.insert_mut(0, root_element.clone());
+
+                // we've got the new indices now, so we can replace the root element's list in-place
+                *new_root.attributes.entry(definitions_name_idx).or_default() = particle_system_indices.into_boxed_slice().into();
 
                 // this new in-memory PCF has only the elements listed in elements_to_extract, with element references
                 // fixed to match any changes in indices.
