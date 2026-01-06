@@ -169,33 +169,6 @@ impl Pcf {
         Some(visited)
     }
 
-    pub fn merge_excluding_elements<'a>(
-        self,
-        other: Pcf,
-        elements: impl IntoIterator<Item = &'a String>,
-    ) -> Result<Self, MergeError> {
-        todo!();
-    }
-
-    /// Merges all of `other`'s particle system definitions & their dependent elements with `self`.
-    ///
-    /// If an element in `other` has a name that matches an element already in `self`, then it is skipped. Any
-    /// references to the element from `other` are updated to point to the element in `self` instead.
-    ///
-    /// ## Errors
-    ///
-    /// Errors if there was an issue merging the objects together. See [`MergeError`].
-    pub fn merge_particle_systems(self, other: Pcf) -> Result<Self, MergeError> {
-        todo!();
-    }
-
-    pub fn filter_merge<F>(self, other: Pcf, predicate: F)
-    where
-        F: Fn(&Element) -> bool,
-    {
-        todo!();
-    }
-
     /// Merges the contents of `self` and `other` together.
     ///
     /// Strings and elements are moved into the merged [`Pcf`]. Duplicate strings are skipped and references to skipped
