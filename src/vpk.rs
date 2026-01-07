@@ -1,6 +1,10 @@
-use std::{fs::{File, OpenOptions}, io::{self, BufReader, BufWriter, Seek, SeekFrom}, path::Path};
 use anyhow::anyhow;
 use glob::glob;
+use std::{
+    fs::{File, OpenOptions},
+    io::{self, BufReader, BufWriter, Seek, SeekFrom},
+    path::Path,
+};
 
 use relative_path::RelativePathBuf;
 use thiserror::Error;
@@ -26,13 +30,13 @@ pub enum PatchError {
 
 pub trait PatchVpkExt {
     /// Patches data over an existing entry in the vpk's tree.
-    /// 
+    ///
     /// The file on disk must have the same size as the file in the VPK, and the file must not have any preload data.
-    /// 
+    ///
     /// ## Errors
-    /// 
+    ///
     /// Returns [`Err`] if:
-    /// 
+    ///
     /// - the file described by `path_in_vpk` does not exist in the vpk
     /// - the file in VPK has a preload data block.
     /// - the file on disk and file in VPK have different sizes
@@ -43,11 +47,11 @@ pub trait PatchVpkExt {
 
     /// Searches `backup_dir` PCF files recusively under the `particles` subfolder, and patches them into `self` over
     /// files in the VPK with the same paths relative to `backup_dir`.
-    /// 
+    ///
     /// ## Errors
-    /// 
+    ///
     /// Returns [`Err`] if:
-    /// 
+    ///
     /// - There was an error when searching the `backup_dir`
     /// - There was an error forming a string path for a PCF
     fn restore_particles(&mut self, backup_dir: impl AsRef<Path>) -> anyhow::Result<()>;
@@ -107,7 +111,11 @@ impl PatchVpkExt for vpk::VPK {
             // given ./particles/example.pcf, we should map to:
 
             //   /particles/example.pcf - the path to the file in the VPK
-            let path_in_vpk = particle_file.to_path("/").into_os_string().into_string().or(Err(anyhow!("failed to convert the PCF path to a unicode string")))?;
+            let path_in_vpk = particle_file
+                .to_path("/")
+                .into_os_string()
+                .into_string()
+                .or(Err(anyhow!("failed to convert the PCF path to a unicode string")))?;
 
             //   /path/to/backup/particles/example.pcf - the actual on-disk path of the backup particle file
             let path_on_disk = particle_file.to_path(backup_dir);
