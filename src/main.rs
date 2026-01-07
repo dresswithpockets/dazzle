@@ -232,7 +232,7 @@ fn main() -> anyhow::Result<()> {
     // TODO: evaluate if there are any conflicting particles in each addon, and warn the user
     //       for now we're just assuming there are no conflicts
 
-    // create intermediary split-up PCF files by cross referencing our addon PCFs with the particle_system_map.json
+    // create intermediary PCF objects by cross referencing our addon PCFs with the particle_system_map.json
     for addon in &addons {
         /*
             in a copy of vanilla tf2, there are many PCFs containing particle system definitions. Except in a couple
@@ -325,6 +325,8 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    // TODO: filter out PCFs based on user selection, for now we'll just pick the first one in the list if there are conflicting PCFs
+
     // ensure we start from a consistent state by restoring the particles in the tf misc vpk back to vanilla content.
     if let Err(err) = misc_vpk.restore_particles(&app.backup_dir) {
         eprintln!("There was an error restoring some or all particles to the vanilla state: {err}");
@@ -336,8 +338,35 @@ fn main() -> anyhow::Result<()> {
     //       then, add material to a list of "required materials" (ignoring vgui/white)
     // TODO: if required materials are provided by the addon, then copy them to the to-be-vpk directory
     // TODO: if addon-provided required materials reference addon-provided textures, then copy those textures to the to-be-vpk directory
-    // TODO: merge particle files that were previously split
-    // TODO: "fill in missing vanilla elements for reconstructed split files"
+
+    // TODO: de-duplicate elements in item_fx.pcf, halloween.pcf, bigboom.pcf, and dirty_explode.pcf.
+    //       NB we dont need to do this if for any PCFs already in our present_pcfs map
+    //       NBB we can just do the usual routine of: decode, filter by particle_system_map, and reindex
+    //           once done, we can just add these PCFs to processed_pcfs
+
+    // TODO: investigate blood_trail.pcf -> npc_fx.pc "hacky fix for blood_trail being so small"
+
+    /* 
+        TODO/Spike:
+            # if pcf_file = Path("particles/example.pcf"), then base_name = "example"
+            base_name = pcf_file.name
+            mod_pcf = PCFFile(pcf_file).decode()
+
+            if base_name != folder_setup.base_default_pcf.input_file.name and check_parents(mod_pcf, folder_setup.base_default_parents):
+                continue
+
+            if base_name == folder_setup.base_default_pcf.input_file.name:
+                mod_pcf = update_materials(folder_setup.base_default_pcf, mod_pcf)
+
+            # process the mod PCF
+            processed_pcf = remove_duplicate_elements(mod_pcf)
+
+            if pcf_file.stem in DX8_LIST: # dx80 first
+                dx_80_name = pcf_file.stem + "_dx80.pcf"
+                file_handler.process_file(dx_80_name, processed_pcf)
+            
+            file_handler.process_file(base_name, processed_pcf)
+     */
 
     // TODO: figure out how particle_system_map.json is generated. Is it just a map of vanilla PCF paths to named particle system definition elements?
 
