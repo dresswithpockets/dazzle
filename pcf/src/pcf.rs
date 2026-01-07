@@ -2,13 +2,11 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::{CStr, CString},
     fmt::Display,
-    hash::Hash,
     marker::PhantomData,
     vec,
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use either::Either::{self, Left, Right};
 use itertools::Itertools;
 use ordermap::OrderMap;
 use thiserror::Error;
@@ -69,12 +67,34 @@ impl Version {
 
 pub type TypeIndex = u16;
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Element {
     pub type_idx: TypeIndex,
     pub name: CString,
     pub signature: [u8; 16],
     pub attributes: OrderMap<NameIndex, Attribute>,
+}
+
+pub trait ElementsExt<'a>: Iterator<Item = &'a Element> + Sized {
+    fn map_particle_system_indices(self, particle_system_type_idx: &NameIndex) -> impl Iterator<Item = u32> {
+        self.enumerate().filter_map(|(element_idx, element)| {
+            if element.type_idx == *particle_system_type_idx {
+                Some(element_idx as u32)
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl<'a, T: Iterator<Item = &'a Element> + Sized> ElementsExt<'a> for T {}
+
+#[derive(Debug, Clone)]
+pub struct Root {
+    pub type_idx: TypeIndex,
+    pub name: CString,
+    pub signature: [u8; 16],
+    pub definitions: Box<[u32]>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +105,7 @@ pub struct Element {
 pub struct Pcf {
     pub version: Version,
     pub strings: OrderMap<CString, ()>,
+    pub root: Root,
     pub elements: Vec<Element>,
     elements_by_name: HashMap<CString, u32>,
 }
@@ -95,24 +116,15 @@ pub enum MergeError {
     VersionMismatch(Version, Version),
 
     #[error(
-        "our strings list is missing 'particleSystemDefinitions'. Adding this string may require elements to be fixed up."
-    )]
-    SelfIsMissingRootDefinitionsString,
-
-    #[error(
         "our strings list is missing 'DmeParticleSystemDefinition'. Adding this string may require elements to be fixed up."
     )]
     SelfIsMissingSystemDefinitionString,
 }
 
 impl Pcf {
-    pub fn new(version: Version) -> Pcf {
-        Pcf {
-            version,
-            strings: OrderMap::new(),
-            elements: Vec::new(),
-            elements_by_name: HashMap::new(),
-        }
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn index_of_string(&self, string: &CStr) -> Option<u16> {
+        self.strings.iter().position(|el| el.0 == string).map(|el| el as u16)
     }
 
     pub fn get_element_type(&self, element: &Element) -> Option<&CString> {
@@ -200,12 +212,6 @@ impl Pcf {
             other_to_new_string_idx.insert(other_idx as TypeIndex, mapped_idx as TypeIndex);
         }
 
-        let root_definitions_name_idx = strings
-            .iter()
-            .position(|(el, _)| el == c"particleSystemDefinitions")
-            .ok_or(MergeError::SelfIsMissingRootDefinitionsString)?
-            as NameIndex;
-
         let system_name_idx = strings
             .iter()
             .position(|(el, _)| el == c"DmeParticleSystemDefinition")
@@ -276,23 +282,15 @@ impl Pcf {
         }
 
         // making sure that our merged PCF contains references for all new particle system definitions
-        let root_element = elements.get_mut(0).expect("there should always be a root element");
-        root_element
-            .attributes
-            .entry(root_definitions_name_idx)
-            .and_modify(|root_definitions| {
-                let Attribute::ElementArray(root_definitions) = root_definitions else {
-                    panic!("the root particle systems definitions attribute must always be an ElementArray");
-                };
-
-                *root_definitions = [root_definitions.as_ref(), new_system_indices.as_slice()]
-                    .concat()
-                    .into_boxed_slice();
-            });
+        let mut root = self.root;
+        root.definitions = [root.definitions.as_ref(), new_system_indices.as_slice()]
+            .concat()
+            .into_boxed_slice();
 
         Ok(Pcf {
             version: self.version,
             strings,
+            root,
             elements_by_name: elements
                 .iter()
                 .enumerate()
@@ -302,23 +300,13 @@ impl Pcf {
         })
     }
 
-    pub fn builder() -> PcfBuilder<NoVersion, NoStrings, NoElements> {
+    pub fn builder() -> PcfBuilder<NoVersion, NoStrings, NoElements, NoRoot> {
         PcfBuilder {
             version: NoVersion,
             strings: Vec::new(),
+            root: NoRoot,
             elements: Vec::new(),
             elements_by_name: HashMap::new(),
-            _phantom_elements: PhantomData,
-            _phantom_strings: PhantomData,
-        }
-    }
-
-    pub fn builder_from(pcf: &Pcf) -> PcfBuilder<Version, IncompleteStrings, IncompleteElements> {
-        PcfBuilder {
-            version: pcf.version,
-            strings: pcf.strings.iter().map(|el| el.0.clone()).collect(),
-            elements: pcf.elements.clone(),
-            elements_by_name: pcf.elements_by_name.clone(),
             _phantom_elements: PhantomData,
             _phantom_strings: PhantomData,
         }
@@ -371,20 +359,19 @@ pub struct NoVersion;
 #[derive(Default, Debug, PartialEq)]
 pub struct NoStrings;
 #[derive(Default, Debug, PartialEq)]
-pub struct IncompleteStrings;
-#[derive(Default, Debug, PartialEq)]
 pub struct Strings;
 #[derive(Default, Debug, PartialEq)]
 pub struct NoElements;
 #[derive(Default, Debug, PartialEq)]
-pub struct IncompleteElements;
+pub struct NoRoot;
 #[derive(Default, Debug, PartialEq)]
 pub struct Elements;
 
 #[derive(Default, Debug)]
-pub struct PcfBuilder<A, B, C> {
+pub struct PcfBuilder<A, B, C, D> {
     version: A,
     strings: Vec<CString>,
+    root: D,
     elements: Vec<Element>,
     elements_by_name: HashMap<CString, u32>,
 
@@ -392,70 +379,24 @@ pub struct PcfBuilder<A, B, C> {
     _phantom_elements: PhantomData<C>,
 }
 
-impl PcfBuilder<Version, Strings, Elements> {
+impl PcfBuilder<Version, Strings, Elements, Root> {
     pub fn build(self) -> Pcf {
         Pcf {
             version: self.version,
             strings: self.strings.into_iter().map(|el| (el, ())).collect(),
+            root: self.root,
             elements: self.elements,
             elements_by_name: self.elements_by_name,
         }
     }
 }
 
-impl<A, C> PcfBuilder<A, IncompleteStrings, C> {
-    pub fn complete_strings(self) -> Result<PcfBuilder<A, Strings, C>, PcfBuilder<A, NoStrings, C>> {
-        if self.strings.is_empty() {
-            Err(PcfBuilder {
-                version: self.version,
-                strings: self.strings,
-                elements: self.elements,
-                elements_by_name: self.elements_by_name,
-                _phantom_strings: PhantomData,
-                _phantom_elements: PhantomData,
-            })
-        } else {
-            Ok(PcfBuilder {
-                version: self.version,
-                strings: self.strings,
-                elements: self.elements,
-                elements_by_name: self.elements_by_name,
-                _phantom_strings: PhantomData,
-                _phantom_elements: PhantomData,
-            })
-        }
-    }
-}
-
-impl<A, B> PcfBuilder<A, B, IncompleteElements> {
-    pub fn complete_elements(self) -> Either<PcfBuilder<A, B, Elements>, PcfBuilder<A, B, NoElements>> {
-        if self.elements.is_empty() {
-            Right(PcfBuilder {
-                version: self.version,
-                strings: self.strings,
-                elements: self.elements,
-                elements_by_name: self.elements_by_name,
-                _phantom_strings: PhantomData,
-                _phantom_elements: PhantomData,
-            })
-        } else {
-            Left(PcfBuilder {
-                version: self.version,
-                strings: self.strings,
-                elements: self.elements,
-                elements_by_name: self.elements_by_name,
-                _phantom_strings: PhantomData,
-                _phantom_elements: PhantomData,
-            })
-        }
-    }
-}
-
-impl<B, C> PcfBuilder<NoVersion, B, C> {
-    pub fn version(self, version: Version) -> PcfBuilder<Version, B, C> {
+impl<B, C, D> PcfBuilder<NoVersion, B, C, D> {
+    pub fn version(self, version: Version) -> PcfBuilder<Version, B, C, D> {
         PcfBuilder {
             version,
             strings: self.strings,
+            root: self.root,
             elements: self.elements,
             elements_by_name: self.elements_by_name,
             _phantom_elements: PhantomData,
@@ -464,11 +405,12 @@ impl<B, C> PcfBuilder<NoVersion, B, C> {
     }
 }
 
-impl<A, C> PcfBuilder<A, NoStrings, C> {
-    pub fn strings(self, strings: Vec<CString>) -> PcfBuilder<A, Strings, C> {
+impl<A, C, D> PcfBuilder<A, NoStrings, C, D> {
+    pub fn strings(self, strings: Vec<CString>) -> PcfBuilder<A, Strings, C, D> {
         PcfBuilder {
             version: self.version,
             strings,
+            root: self.root,
             elements: self.elements,
             elements_by_name: self.elements_by_name,
             _phantom_elements: PhantomData,
@@ -476,10 +418,11 @@ impl<A, C> PcfBuilder<A, NoStrings, C> {
         }
     }
 
-    pub fn string(self, string: CString) -> PcfBuilder<A, Strings, C> {
+    pub fn string(self, string: CString) -> PcfBuilder<A, Strings, C, D> {
         PcfBuilder {
             version: self.version,
             strings: vec![string],
+            root: self.root,
             elements: self.elements,
             elements_by_name: self.elements_by_name,
             _phantom_elements: PhantomData,
@@ -488,14 +431,15 @@ impl<A, C> PcfBuilder<A, NoStrings, C> {
     }
 }
 
-impl<A, C> PcfBuilder<A, Strings, C> {
-    pub fn string(self, string: CString) -> PcfBuilder<A, Strings, C> {
+impl<A, C, D> PcfBuilder<A, Strings, C, D> {
+    pub fn string(self, string: CString) -> PcfBuilder<A, Strings, C, D> {
         let mut strings = self.strings;
         strings.push(string);
 
         PcfBuilder {
             version: self.version,
             strings,
+            root: self.root,
             elements: self.elements,
             elements_by_name: self.elements_by_name,
             _phantom_elements: PhantomData,
@@ -504,8 +448,8 @@ impl<A, C> PcfBuilder<A, Strings, C> {
     }
 }
 
-impl<A, B> PcfBuilder<A, B, NoElements> {
-    pub fn elements(self, elements: Vec<Element>) -> PcfBuilder<A, B, Elements> {
+impl<A, B, D> PcfBuilder<A, B, NoElements, D> {
+    pub fn elements(self, elements: Vec<Element>) -> PcfBuilder<A, B, Elements, D> {
         let mut elements_by_name = self.elements_by_name;
         for (idx, element) in elements.iter().enumerate() {
             elements_by_name.insert(element.name.clone(), idx as u32);
@@ -514,6 +458,7 @@ impl<A, B> PcfBuilder<A, B, NoElements> {
         PcfBuilder {
             version: self.version,
             strings: self.strings,
+            root: self.root,
             elements,
             elements_by_name,
             _phantom_elements: PhantomData,
@@ -521,13 +466,14 @@ impl<A, B> PcfBuilder<A, B, NoElements> {
         }
     }
 
-    pub fn element(self, element: Element) -> PcfBuilder<A, B, Elements> {
+    pub fn element(self, element: Element) -> PcfBuilder<A, B, Elements, D> {
         let mut elements_by_name = self.elements_by_name;
         elements_by_name.insert(element.name.clone(), 0);
 
         PcfBuilder {
             version: self.version,
             strings: self.strings,
+            root: self.root,
             elements: vec![element],
             elements_by_name,
             _phantom_elements: PhantomData,
@@ -536,8 +482,8 @@ impl<A, B> PcfBuilder<A, B, NoElements> {
     }
 }
 
-impl<A, B> PcfBuilder<A, B, Elements> {
-    pub fn element(self, element: Element) -> PcfBuilder<A, B, Elements> {
+impl<A, B, D> PcfBuilder<A, B, Elements, D> {
+    pub fn element(self, element: Element) -> PcfBuilder<A, B, Elements, D> {
         let element_name = element.name.clone();
 
         let mut elements = self.elements;
@@ -549,10 +495,25 @@ impl<A, B> PcfBuilder<A, B, Elements> {
         PcfBuilder {
             version: self.version,
             strings: self.strings,
+            root: self.root,
             elements,
             elements_by_name,
             _phantom_elements: PhantomData,
             _phantom_strings: PhantomData,
+        }
+    }
+}
+
+impl<A, B, C, NoRoot> PcfBuilder<A, B, C, NoRoot> {
+    pub fn root(self, root: Root) -> PcfBuilder<A, B, C, Root> {
+        PcfBuilder {
+            version: self.version,
+            strings: self.strings,
+            root,
+            elements: self.elements,
+            elements_by_name: self.elements_by_name,
+            _phantom_strings: PhantomData,
+            _phantom_elements: PhantomData,
         }
     }
 }
@@ -573,6 +534,14 @@ pub enum Error {
 
     #[error(transparent)]
     ReadError(#[from] attribute::ReadError),
+
+    #[error("The DMX string list does not contain 'particleSystemDefinitions', so it cant be a valid PCF")]
+    MissingRootDefinitionString,
+
+    #[error(
+        "The DMX element list does not contain a valid root element with a particle systems definition list, so it cant be a valid PCF"
+    )]
+    MissingRootDefinitions,
 }
 
 // reading functions
@@ -580,7 +549,14 @@ impl Pcf {
     pub fn decode(buf: &mut impl std::io::BufRead) -> Result<Pcf, Error> {
         let version = Self::read_magic_version(buf)?;
         let strings = Self::read_strings(buf)?;
-        let elements = Self::read_elements(buf)?;
+
+        let definitions_name_idx = strings
+            .iter()
+            .find_position(|el| el.0 == c"particleSystemDefinitions")
+            .ok_or(Error::MissingRootDefinitionString)?
+            .0 as NameIndex;
+
+        let (root, elements) = Self::read_elements(definitions_name_idx, buf)?;
 
         let mut elements_by_name = HashMap::new();
         for (idx, element) in elements.iter().enumerate() {
@@ -590,6 +566,7 @@ impl Pcf {
         Ok(Self {
             version,
             strings,
+            root,
             elements,
             elements_by_name,
         })
@@ -621,8 +598,16 @@ impl Pcf {
         Ok(strings)
     }
 
-    fn read_elements(file: &mut impl std::io::BufRead) -> Result<Vec<Element>, Error> {
-        let element_count = file.read_u32::<LittleEndian>()? as usize;
+    fn read_elements(
+        definitions_name_idx: NameIndex,
+        file: &mut impl std::io::BufRead,
+    ) -> Result<(Root, Vec<Element>), Error> {
+        let element_count = file.read_u32::<LittleEndian>()? as usize - 1;
+
+        let root_type_idx = file.read_u16::<LittleEndian>()?;
+        let root_name = Self::read_terminated_string(file)?;
+        let root_signature = file.read_array::<16>()?;
+
         let mut elements = Vec::with_capacity(element_count);
         for _idx in 0..element_count {
             let type_idx = file.read_u16::<LittleEndian>()?;
@@ -638,13 +623,31 @@ impl Pcf {
         }
 
         let attributes: Result<Vec<_>, _> = AttributeReader::try_from(file, element_count)?.into_iter().collect();
-        let attributes = attributes?.into_iter().chunk_by(|el| el.0);
+        let mut attributes = attributes?;
+
+        let (0, name_idx, Attribute::ElementArray(root_definitions)) = attributes.remove(0) else {
+            return Err(Error::MissingRootDefinitions);
+        };
+
+        if name_idx != definitions_name_idx {
+            return Err(Error::MissingRootDefinitions);
+        }
+
+        let attributes = attributes.into_iter().chunk_by(|el| el.0);
         for (element_idx, group) in attributes.into_iter() {
             let element = elements.get_mut(element_idx).expect("this should never happen");
             element.attributes = group.map(|el| (el.1, el.2)).collect();
         }
 
-        Ok(elements)
+        Ok((
+            Root {
+                type_idx: root_type_idx,
+                name: root_name,
+                signature: root_signature,
+                definitions: root_definitions,
+            },
+            elements,
+        ))
     }
 }
 
@@ -653,7 +656,7 @@ impl Pcf {
     pub fn encode(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
         Self::write_magic_version(&self.version, file)?;
         Self::write_strings(&self.strings, file)?;
-        Self::write_elements(&self.elements, file)?;
+        Self::write_elements(&self.root, &self.elements, file)?;
 
         Ok(())
     }
@@ -675,15 +678,20 @@ impl Pcf {
         Ok(())
     }
 
-    fn write_elements(elements: &Vec<Element>, file: &mut impl std::io::Write) -> anyhow::Result<()> {
-        file.write_u32::<LittleEndian>(elements.len() as u32)?;
+    fn write_elements(root: &Root, elements: &Vec<Element>, file: &mut impl std::io::Write) -> anyhow::Result<()> {
+        file.write_u32::<LittleEndian>(elements.len() as u32 + 1)?;
+
+        file.write_u16::<LittleEndian>(root.type_idx)?;
+        file.write_all(root.name.to_bytes_with_nul())?;
+        file.write_all(&root.signature)?;
+
         for element in elements {
             file.write_u16::<LittleEndian>(element.type_idx)?;
             file.write_all(element.name.to_bytes_with_nul())?;
             file.write_all(&element.signature)?;
         }
 
-        AttributeWriter::from(file).write_attributes(elements)?;
+        AttributeWriter::from(file).write_attributes(&root.definitions, elements)?;
 
         Ok(())
     }

@@ -29,7 +29,7 @@ pub mod attribute;
 pub mod pcf;
 
 pub use attribute::{Attribute, NameIndex};
-pub use pcf::{Element, Pcf, TypeIndex};
+pub use pcf::{Element, ElementsExt, Pcf, Root, TypeIndex};
 
 pub fn decode(buf: &mut impl std::io::BufRead) -> Result<Pcf, pcf::Error> {
     Pcf::decode(buf)
