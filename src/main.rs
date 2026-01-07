@@ -31,7 +31,6 @@ pub mod addon;
 pub mod vpk;
 
 use std::{
-    cell::LazyCell,
     collections::{BTreeMap, HashMap},
     ffi::{CStr, CString},
     fs::{self, File},
@@ -42,13 +41,13 @@ use std::{
 };
 
 use directories::ProjectDirs;
-use ordermap::{OrderMap, OrderSet};
-use pcf::{Element, Pcf};
+use ordermap::OrderMap;
+use pcf::{ElementsExt, Pcf};
 use single_instance::SingleInstance;
 use typed_path::Utf8PlatformPathBuf;
 
 use crate::addon::Sources;
-use crate::vpk::{VPK, PatchVpkExt};
+use crate::vpk::{PatchVpkExt, VPK};
 
 struct App {
     _config_dir: Utf8PlatformPathBuf,
@@ -88,20 +87,7 @@ fn main() -> anyhow::Result<()> {
         process::exit(1);
     }
 
-    let tf_dir: Utf8PlatformPathBuf = [
-        "/",
-        "home",
-        "snale",
-        ".local",
-        "share",
-        "Steam",
-        "steamapps",
-        "common",
-        "Team Fortress 2",
-        "tf",
-    ]
-    .iter()
-    .collect();
+    let tf_dir: Utf8PlatformPathBuf = ["local_test", "tf"].iter().collect();
 
     let Some(project_dirs) = ProjectDirs::from("net", "dresswithpockets", "tf2preloader") else {
         eprintln!(
@@ -246,18 +232,6 @@ fn main() -> anyhow::Result<()> {
     // TODO: evaluate if there are any conflicting particles in each addon, and warn the user
     //       for now we're just assuming there are no conflicts
 
-    let mut vanilla_particles = HashMap::new();
-    for pcf_path in app.pcf_to_particle_system.keys() {
-        vanilla_particles.insert(
-            pcf_path,
-            LazyCell::new(|| -> anyhow::Result<Pcf> {
-                let pcf_path = app.backup_dir.join_checked(pcf_path.clone())?;
-                let mut reader = File::open_buffered(pcf_path)?;
-                Ok(Pcf::decode(&mut reader)?)
-            }),
-        );
-    }
-
     // create intermediary split-up PCF files by cross referencing our addon PCFs with the particle_system_map.json
     for addon in &addons {
         /*
@@ -277,19 +251,10 @@ fn main() -> anyhow::Result<()> {
                 continue;
             }
 
-            let Some(definitions_name_idx) = pcf.strings.iter().position(|el| el.0 == c"particleSystemDefinitions")
-            else {
-                eprintln!(
-                    "couldn't find the 'particleSystemDefinitions' string in '{file_name}'. This could mean that the source PCF was malformed. Addon: {}",
-                    addon.source_path
-                );
-                continue;
-            };
-
             #[allow(clippy::cast_possible_truncation)]
-            let definitions_name_idx = definitions_name_idx as pcf::NameIndex;
-
-            let root_element = pcf.elements[0].clone();
+            let system_definition_type_idx = pcf
+                .index_of_string(c"DmeParticleSystemDefinition")
+                .expect("DmeParticleSystemDefinition should always be present");
 
             // grouping the elements from our addon by the vanilla PCF they're mapped to in particle_system_map.json.
             let mut elements_by_vanilla_pcf_path = HashMap::<&String, OrderMap<&CString, &pcf::Element>>::new();
@@ -298,7 +263,7 @@ fn main() -> anyhow::Result<()> {
                     continue;
                 };
 
-                // we're also riding ourselves of duplicate particle systems here. The first one always takes priority,
+                // we're also ridding ourselves of duplicate particle systems here. The first one always takes priority,
                 // subsequent particle systems with the same name are skipped entirely.
                 elements_by_vanilla_pcf_path
                     .entry(pcf_path)
@@ -311,36 +276,30 @@ fn main() -> anyhow::Result<()> {
                 // matched_elements contains a subset of the original elements in the pcf. As a result, any
                 // Element or ElementArray attributes may not point to the correct index - the order is
                 // retained but the indices aren't. So, we need to reindex any references to other elements in the set.
-                let mut new_elements = reindex_elements(pcf, matched_elements.into_values());
+                let new_elements = reindex_elements(pcf, matched_elements.into_values());
 
                 // the root element always stores an attribute "particleSystemDefinitions" which stores an ElementArray
                 // containing the index of every DmeParticleSystemDefinition-type element. We've changed the indices of
                 // our particle system definitions, so we need to update the root element's list with the new indices.
-                let mut particle_system_indices = Vec::new();
-                for (element_idx, element) in new_elements.iter().enumerate().skip(1) {
-                    let Some((type_name, ())) = pcf.strings.get_index(element.type_idx as usize) else {
-                        continue;
-                    };
-
-                    if type_name != c"DmeParticleSystemDefinition" {
-                        continue;
-                    }
-
-                    #[allow(clippy::cast_possible_truncation)]
-                    particle_system_indices.push(element_idx as u32);
-                }
+                let particle_system_indices: Vec<_> = new_elements
+                    .iter()
+                    .map_particle_system_indices(&system_definition_type_idx)
+                    .collect();
 
                 // our filtered `new_elements` only contains particle systems, it does not contain a root element
-                let new_root = new_elements.insert_mut(0, root_element.clone());
-
-                // we've got the new indices now, so we can replace the root element's list in-place
-                *new_root.attributes.entry(definitions_name_idx).or_default() = particle_system_indices.into_boxed_slice().into();
+                let root = pcf::Root {
+                    type_idx: pcf.root.type_idx,
+                    name: pcf.root.name.clone(),
+                    signature: pcf.root.signature,
+                    definitions: particle_system_indices.into_boxed_slice(),
+                };
 
                 // this new in-memory PCF has only the elements listed in elements_to_extract, with element references
                 // fixed to match any changes in indices.
                 let new_pcf = pcf::Pcf::builder()
                     .version(pcf.version)
                     .strings(pcf.strings.iter().map(|el| el.0.clone()).collect())
+                    .root(root)
                     .elements(new_elements)
                     .build();
 
@@ -351,56 +310,18 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
+        // Our merged PCF may be missing some elements in present in the vanilla PCF, so we lazily decode the
+        // target vanilla PCF and merge it in.
         //
-        for (target_pcf_path, mut pcf_files) in processed_target_pcf_paths {
-            let target_pcf_elements = app
-                .pcf_to_particle_system
-                .get(target_pcf_path)
-                .expect("The target_pcf_path is sourced from the particle system map, so this should never happen");
-            let target_pcf_elements: OrderSet<&CString> = target_pcf_elements.iter().collect();
+        // In some cases (item_fx.pcf), we split up the pcf into two PCFs with new paths.
+        let mut processed_pcfs = HashMap::new();
+        for (target_pcf_path, pcf_files) in processed_target_pcf_paths {
+            let full_pcf_path = app.backup_dir.join_checked(target_pcf_path)?;
+            let mut reader = File::open_buffered(full_pcf_path)?;
+            let target_pcf = Pcf::decode(&mut reader)?;
 
-            // We took care of duplicate elements from our addon when grouping addon elements by vanilla PCF, so we
-            // don't do any special handling for duplicate elements here.
-
-            let merged_pcf = pcf_files.pop().expect("there should be at least one pcf in the group");
-            let merged_pcf = pcf_files
-                .into_iter()
-                .try_fold(merged_pcf, Pcf::merge)
-                .expect("failed to merge addon PCFs");
-
-            // Our merged PCF may be missing some elements in present in the vanilla PCF, so we lazily decode the
-            // target vanilla PCF and merge it in.
-            let target_pcf = vanilla_particles
-                .get(target_pcf_path)
-                .expect("The target_pcf_path is sourced from the particle system map, so this should never happen");
-            let target_pcf = &**target_pcf;
-            let target_pcf = match target_pcf {
-                Ok(pcf) => pcf.to_owned(),
-                Err(err) => {
-                    eprintln!("Error retrieving decoded PCF for a vanilla PCF file: {err}");
-                    continue;
-                }
-            };
-
-            let merged_pcf = merged_pcf
-                .merge(target_pcf)
-                .expect("failed to merge the vanilla PCF into the modified PCF");
-
-            // item_fx.pcf is a special case, its elements will get split up into item_fx_unusuals.pcf and into
-            // item_fx_gameplay.pcf
-            // TODO:
-            // let processed_pcfs = if target_pcf_path == "item_fx.pcf" {
-            //     let (unusual_elements, gameplay_elements): (Vec<_>, Vec<_>) = merged_pcf.elements.iter().partition(|el| el.name == c"superare_balloon" || cstr_starts_with(&el.name, c"superrare_") || cstr_starts_with(&el.name, c"unusual_"));
-
-            //     // after partitioning, gameplay_elements is going to have a root element with incorrect element indices
-            //     // and unusual_elements will have no root element.
-            //     let unusual_elements = reindex_elements(&merged_pcf, unusual_elements);
-            //     let gameplay_elements = reindex_elements(&merged_pcf, gameplay_elements);
-
-            // } else {
-            //     vec![merged_pcf]
-            // }
-            
+            let processed = process_mapped_particles(target_pcf_path, target_pcf, pcf_files)?;
+            processed_pcfs.extend(processed);
         }
     }
 
@@ -423,6 +344,83 @@ fn main() -> anyhow::Result<()> {
     // TODO: process and patch particles into main VPK, handling duplicate effects
 
     Ok(())
+}
+
+fn process_mapped_particles(
+    target_pcf_path: &str,
+    target_pcf: Pcf,
+    mut pcf_files: Vec<Pcf>,
+) -> anyhow::Result<Vec<(&str, Pcf)>> {
+    // We took care of duplicate elements from our addon when grouping addon elements by vanilla PCF, so we
+    // don't do any special handling for duplicate elements here.
+    let merged_pcf = pcf_files.pop().expect("there should be at least one pcf in the group");
+    let merged_pcf = pcf_files.into_iter().try_fold(merged_pcf, Pcf::merge)?;
+
+    let merged_pcf = merged_pcf
+        .merge(target_pcf)
+        .expect("failed to merge the vanilla PCF into the modified PCF");
+
+    // item_fx.pcf is a special case, its elements will get split up into item_fx_unusuals.pcf and into
+    // item_fx_gameplay.pcf
+    let system_definition_type_idx = merged_pcf
+        .index_of_string(c"DmeParticleSystemDefinition")
+        .expect("DmeParticleSystemDefinition should always be present");
+    let processed_pcfs = if target_pcf_path == "particles/item_fx.pcf" {
+        let (unusual_elements, gameplay_elements): (Vec<_>, Vec<_>) = merged_pcf.elements.iter().partition(|el| {
+            el.name == c"superare_balloon"
+                || cstr_starts_with(&el.name, c"superrare_")
+                || cstr_starts_with(&el.name, c"unusual_")
+        });
+
+        let unusual_elements = reindex_elements(&merged_pcf, unusual_elements);
+        let gameplay_elements = reindex_elements(&merged_pcf, gameplay_elements);
+
+        let unusual_system_indices: Vec<_> = unusual_elements
+            .iter()
+            .map_particle_system_indices(&system_definition_type_idx)
+            .collect();
+        let gameplay_system_indices: Vec<_> = gameplay_elements
+            .iter()
+            .map_particle_system_indices(&system_definition_type_idx)
+            .collect();
+
+        let unusual_root = pcf::Root {
+            type_idx: merged_pcf.root.type_idx,
+            name: merged_pcf.root.name.clone(),
+            signature: merged_pcf.root.signature,
+            definitions: unusual_system_indices.into_boxed_slice(),
+        };
+
+        let gameplay_root = pcf::Root {
+            type_idx: merged_pcf.root.type_idx,
+            name: merged_pcf.root.name.clone(),
+            signature: merged_pcf.root.signature,
+            definitions: gameplay_system_indices.into_boxed_slice(),
+        };
+
+        let unusual_pcf = pcf::Pcf::builder()
+            .version(merged_pcf.version)
+            .strings(merged_pcf.strings.iter().map(|el| el.0.clone()).collect())
+            .root(unusual_root)
+            .elements(unusual_elements)
+            .build();
+
+        let gameplay_pcf = pcf::Pcf::builder()
+            .version(merged_pcf.version)
+            .strings(merged_pcf.strings.iter().map(|el| el.0.clone()).collect())
+            .root(gameplay_root)
+            .elements(gameplay_elements)
+            .build();
+
+        vec![
+            ("particles/item_fx_unusuals.pcf", unusual_pcf),
+            ("particles/item_fx_gameplay.pcf", gameplay_pcf),
+        ]
+    } else {
+        vec![(target_pcf_path, merged_pcf)]
+    };
+
+    Ok(processed_pcfs)
 }
 
 fn cstr_starts_with(string: &CStr, prefix: &CStr) -> bool {
