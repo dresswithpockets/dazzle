@@ -436,9 +436,11 @@ impl Pcf {
 
         (name_idx, attribute)
     }
-    
+
     pub fn get_particle_system_definitions(&self) -> impl Iterator<Item = &Element> {
-        self.elements.iter().filter(|el| el.type_idx == self.strings.particle_system_definition_type_idx)
+        self.elements
+            .iter()
+            .filter(|el| el.type_idx == self.strings.particle_system_definition_type_idx)
     }
 
     pub fn get_material<'a>(&'a self, element: &'a Element) -> Option<&'a CString> {
@@ -689,7 +691,9 @@ impl Pcf {
         }
 
         // we add one to element_count since AttributeReader will read root's attributes + elements' attributes
-        let attributes: Result<Vec<_>, _> = AttributeReader::try_from(file, element_count + 1)?.into_iter().collect();
+        let attributes: Result<Vec<_>, _> = AttributeReader::try_from(file, element_count + 1)?
+            .into_iter()
+            .collect();
         let mut attributes = attributes?;
 
         let (0, name_idx, Attribute::ElementArray(root_definitions)) = attributes.remove(0) else {
@@ -769,7 +773,7 @@ impl Pcf {
         AttributeWriter::from(file).write_attributes(
             self.strings.particle_system_definitions_name_idx,
             &self.root.definitions,
-            &self.elements
+            &self.elements,
         )?;
 
         Ok(())
@@ -778,8 +782,6 @@ impl Pcf {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::OpenOptions;
-
     use bytes::{Buf, BufMut, Bytes, BytesMut};
 
     use super::*;

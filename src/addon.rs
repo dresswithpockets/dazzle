@@ -2,7 +2,10 @@ use anyhow::anyhow;
 use copy_dir::copy_dir;
 use glob::glob;
 use std::{
-    collections::HashMap, fs::{self, File, OpenOptions}, io::{self, Read}, path::{Path, PathBuf}
+    collections::HashMap,
+    fs::{self, File, OpenOptions},
+    io::{self, Read},
+    path::{Path, PathBuf},
 };
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
@@ -65,7 +68,7 @@ pub struct Extracted {
 }
 
 impl Extracted {
-    fn get_material_files(materials_path: &Utf8PlatformPath) -> anyhow::Result<HashMap<String, Material>>  {
+    fn get_material_files(materials_path: &Utf8PlatformPath) -> anyhow::Result<HashMap<String, Material>> {
         fn value_to_texture_name(cow: &str) -> String {
             let owned = cow.to_owned();
             if owned.eq_ignore_ascii_case(".vtf") {
@@ -82,8 +85,7 @@ impl Extracted {
             let relative_path = path.strip_prefix(materials_path)?.to_owned();
 
             let mut vmt_buf = String::new();
-            File::open(&path)?
-                .read_to_string(&mut vmt_buf)?;
+            File::open(&path)?.read_to_string(&mut vmt_buf)?;
 
             let root = keyvalues_parser::parse(&vmt_buf)?;
 
@@ -112,7 +114,7 @@ impl Extracted {
                     "$ramptexture" => material.ramp_texture = Some(value_to_texture_name(value)),
                     "$normalmap" => material.normal_map = Some(value_to_texture_name(value)),
                     "$normalmap2" => material.normal_map_2 = Some(value_to_texture_name(value)),
-                    _ => {},
+                    _ => {}
                 }
             }
 
@@ -142,7 +144,7 @@ impl Extracted {
             let pcf = pcf::decode(&mut file)?;
             particle_files.insert(path.into_owned(), pcf);
         }
-        
+
         let materials_path = self.content_path.join_checked("materials")?;
         let relative_material_files = Self::get_material_files(&materials_path)?;
 

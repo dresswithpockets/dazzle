@@ -334,7 +334,8 @@ impl<'a, W: io::Write> AttributeWriter<'a, W> {
 
         // the root element always has only 1 attribute, and the element array type is always 15.
         self.writer.write_u32::<LittleEndian>(1)?;
-        self.writer.write_u16::<LittleEndian>(particle_system_definitions_name_idx)?;
+        self.writer
+            .write_u16::<LittleEndian>(particle_system_definitions_name_idx)?;
         self.writer.write_u8(ELEMENT_ARRAY_TYPE)?;
         self.write_array(root_definitions)?;
 

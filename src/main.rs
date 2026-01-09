@@ -32,7 +32,13 @@ pub mod addon;
 pub mod patch;
 
 use std::{
-    collections::{BTreeMap, HashMap}, ffi::CString, fs::{self, File, copy}, io::{self}, path::PathBuf, process, str::FromStr
+    collections::{BTreeMap, HashMap},
+    ffi::CString,
+    fs::{self, File, copy},
+    io::{self},
+    path::PathBuf,
+    process,
+    str::FromStr,
 };
 
 use directories::ProjectDirs;
@@ -58,7 +64,10 @@ struct App {
 }
 
 impl App {
-    fn merge_addon_particles(&self, particle_files: &HashMap<Utf8PlatformPathBuf, pcf::Pcf>) -> HashMap<&String, Vec<Pcf>> {
+    fn merge_addon_particles(
+        &self,
+        particle_files: &HashMap<Utf8PlatformPathBuf, pcf::Pcf>,
+    ) -> HashMap<&String, Vec<Pcf>> {
         let mut processed_target_pcf_paths: HashMap<&String, Vec<Pcf>> = HashMap::new();
         for (file_path, pcf) in particle_files {
             // dx80 and dx90 are a special case that we skip over. TODO: i think we generate them later?
@@ -514,12 +523,11 @@ fn main() -> anyhow::Result<()> {
             let full_pcf_path = app.backup_dir.join_checked(target_pcf_path)?;
             let mut reader = File::open_buffered(full_pcf_path)?;
             let target_pcf = pcf::decode(&mut reader)?;
-            
+
             let (new_pcf_path, new_pcf) = App::process_mapped_particles(target_pcf_path, target_pcf, pcf_files)?;
-            processed_pcfs.entry(new_pcf_path).or_insert(ProcessedPcf {
-                addon,
-                pcf: new_pcf,
-            });
+            processed_pcfs
+                .entry(new_pcf_path)
+                .or_insert(ProcessedPcf { addon, pcf: new_pcf });
         }
     }
 
@@ -531,7 +539,7 @@ fn main() -> anyhow::Result<()> {
     for (new_path, processed_pcf) in &processed_pcfs {
         // TODO: what if two addons provide materials with the same name?
         //       does the particle system's material need to exist in vanilla?
-        //       if the neither material or texture need to be present in the base game: we can give each vmt and vtf 
+        //       if the neither material or texture need to be present in the base game: we can give each vmt and vtf
         //       a unique name - like a hash - then change the name of the material in the PCF to point to the new vmt.
         //
         //       for now, we just pick the first material.
@@ -539,7 +547,10 @@ fn main() -> anyhow::Result<()> {
         let particle_systems = processed_pcf.pcf.get_particle_system_definitions();
         for element in particle_systems {
             let Some(material_name) = processed_pcf.pcf.get_material(element) else {
-                eprintln!("The PCF '{new_path}' contains a particle system '{}' with no material definition. Skipping", element.name.display());
+                eprintln!(
+                    "The PCF '{new_path}' contains a particle system '{}' with no material definition. Skipping",
+                    element.name.display()
+                );
                 continue;
             };
 
@@ -552,10 +563,12 @@ fn main() -> anyhow::Result<()> {
 
             // we only care about this material if the addon actually provides it.
             let Some(parsed_material) = processed_pcf.addon.relative_material_files.get(&material_name) else {
-                continue
+                continue;
             };
 
-            materials.entry(material_name).or_insert((processed_pcf.addon, parsed_material));
+            materials
+                .entry(material_name)
+                .or_insert((processed_pcf.addon, parsed_material));
         }
     }
 
@@ -567,11 +580,16 @@ fn main() -> anyhow::Result<()> {
         let from_path = from_materials_path.join_checked(&material.relative_path)?;
         let to_path = to_materials_path.join_checked(material_name)?;
         if let Err(err) = copy(&from_path, &to_path) {
-            eprintln!("There was an error copying the extracted material '{}' to '{to_path}': {err}", &material.relative_path);
+            eprintln!(
+                "There was an error copying the extracted material '{}' to '{to_path}': {err}",
+                &material.relative_path
+            );
             process::exit(1);
         }
 
-        if let Some(texture_name) = &material.base_texture && let Some(from_path) = addon.texture_files.get(texture_name) {
+        if let Some(texture_name) = &material.base_texture
+            && let Some(from_path) = addon.texture_files.get(texture_name)
+        {
             let to_path = to_materials_path.join_checked(texture_name)?;
             if let Err(err) = copy(from_path, &to_path) {
                 eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
@@ -579,7 +597,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        if let Some(texture_name) = &material.detail && let Some(from_path) = addon.texture_files.get(texture_name) {
+        if let Some(texture_name) = &material.detail
+            && let Some(from_path) = addon.texture_files.get(texture_name)
+        {
             let to_path = to_materials_path.join_checked(texture_name)?;
             if let Err(err) = copy(from_path, &to_path) {
                 eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
@@ -587,7 +607,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        if let Some(texture_name) = &material.ramp_texture && let Some(from_path) = addon.texture_files.get(texture_name) {
+        if let Some(texture_name) = &material.ramp_texture
+            && let Some(from_path) = addon.texture_files.get(texture_name)
+        {
             let to_path = to_materials_path.join_checked(texture_name)?;
             if let Err(err) = copy(from_path, &to_path) {
                 eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
@@ -595,7 +617,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        if let Some(texture_name) = &material.normal_map && let Some(from_path) = addon.texture_files.get(texture_name) {
+        if let Some(texture_name) = &material.normal_map
+            && let Some(from_path) = addon.texture_files.get(texture_name)
+        {
             let to_path = to_materials_path.join_checked(texture_name)?;
             if let Err(err) = copy(from_path, &to_path) {
                 eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
@@ -603,7 +627,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        if let Some(texture_name) = &material.normal_map_2 && let Some(from_path) = addon.texture_files.get(texture_name) {
+        if let Some(texture_name) = &material.normal_map_2
+            && let Some(from_path) = addon.texture_files.get(texture_name)
+        {
             let to_path = to_materials_path.join_checked(texture_name)?;
             if let Err(err) = copy(from_path, &to_path) {
                 eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
@@ -627,27 +653,27 @@ fn main() -> anyhow::Result<()> {
 
     // TODO: investigate blood_trail.pcf -> npc_fx.pc "hacky fix for blood_trail being so small"
 
-    /* 
-        TODO/Spike:
-            # if pcf_file = Path("particles/example.pcf"), then base_name = "example"
-            base_name = pcf_file.name
-            mod_pcf = PCFFile(pcf_file).decode()
+    /*
+       TODO/Spike:
+           # if pcf_file = Path("particles/example.pcf"), then base_name = "example"
+           base_name = pcf_file.name
+           mod_pcf = PCFFile(pcf_file).decode()
 
-            if base_name != folder_setup.base_default_pcf.input_file.name and check_parents(mod_pcf, folder_setup.base_default_parents):
-                continue
+           if base_name != folder_setup.base_default_pcf.input_file.name and check_parents(mod_pcf, folder_setup.base_default_parents):
+               continue
 
-            if base_name == folder_setup.base_default_pcf.input_file.name:
-                mod_pcf = update_materials(folder_setup.base_default_pcf, mod_pcf)
+           if base_name == folder_setup.base_default_pcf.input_file.name:
+               mod_pcf = update_materials(folder_setup.base_default_pcf, mod_pcf)
 
-            # process the mod PCF
-            processed_pcf = remove_duplicate_elements(mod_pcf)
+           # process the mod PCF
+           processed_pcf = remove_duplicate_elements(mod_pcf)
 
-            if pcf_file.stem in DX8_LIST: # dx80 first
-                dx_80_name = pcf_file.stem + "_dx80.pcf"
-                file_handler.process_file(dx_80_name, processed_pcf)
-            
-            file_handler.process_file(base_name, processed_pcf)
-     */
+           if pcf_file.stem in DX8_LIST: # dx80 first
+               dx_80_name = pcf_file.stem + "_dx80.pcf"
+               file_handler.process_file(dx_80_name, processed_pcf)
+
+           file_handler.process_file(base_name, processed_pcf)
+    */
 
     // TODO: figure out how particle_system_map.json is generated. Is it just a map of vanilla PCF paths to named particle system definition elements?
 
