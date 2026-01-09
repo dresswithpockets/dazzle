@@ -30,6 +30,7 @@
 
 pub mod addon;
 pub mod patch;
+mod vpk_writer;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -50,17 +51,21 @@ use typed_path::Utf8PlatformPathBuf;
 use crate::addon::{Addon, Sources};
 use crate::patch::PatchVpkExt;
 
+const SPLIT_BY_2GB: u64 = 2 << 30;
+
 struct App {
     _config_dir: Utf8PlatformPathBuf,
     _config_file: Utf8PlatformPathBuf,
     addons_dir: Utf8PlatformPathBuf,
     extracted_addons_dir: Utf8PlatformPathBuf,
     particles_working_dir: Utf8PlatformPathBuf,
-    vpk_working_dir: Utf8PlatformPathBuf,
     backup_dir: Utf8PlatformPathBuf,
     vanilla_pcf_paths: Vec<Utf8PlatformPathBuf>,
     pcf_to_particle_system: HashMap<String, Vec<CString>>,
     particle_system_to_pcf: HashMap<CString, String>,
+
+    vpk_working_dir: Utf8PlatformPathBuf,
+    vpk_out_dir: Utf8PlatformPathBuf,
 }
 
 impl App {
@@ -430,16 +435,18 @@ fn main() -> anyhow::Result<()> {
     }
 
     let app = App {
-        _config_dir: paths::std_to_typed(config_dir)?.to_path_buf(),
-        _config_file: paths::std_to_typed(&config_file)?.to_path_buf(),
-        extracted_addons_dir: paths::std_to_typed(&extracted_addons_dir)?.to_path_buf(),
-        particles_working_dir: paths::std_to_typed(&particles_working_dir)?.to_path_buf(),
-        vpk_working_dir: paths::std_to_typed(&vpk_working_dir)?.to_path_buf(),
-        addons_dir: paths::std_to_typed(&addons_dir)?.to_path_buf(),
+        _config_dir: paths::to_typed(config_dir).to_path_buf(),
+        _config_file: paths::to_typed(&config_file).to_path_buf(),
+        extracted_addons_dir: paths::to_typed(&extracted_addons_dir).to_path_buf(),
+        particles_working_dir: paths::to_typed(&particles_working_dir).to_path_buf(),
+        addons_dir: paths::to_typed(&addons_dir).to_path_buf(),
         backup_dir,
         vanilla_pcf_paths,
         pcf_to_particle_system,
         particle_system_to_pcf,
+
+        vpk_working_dir: paths::to_typed(&vpk_working_dir).to_path_buf(),
+        vpk_out_dir: paths::to_typed(&vpk_working_dir).join_checked("custom")?,
     };
 
     // TODO: detect tf directory
@@ -644,14 +651,28 @@ fn main() -> anyhow::Result<()> {
         process::exit(1);
     }
 
-    // TODO: create a new VPK from our vpk working directory, we need to split VPKs into max-2GB VPKs.
-
     // TODO: de-duplicate elements in item_fx.pcf, halloween.pcf, bigboom.pcf, and dirty_explode.pcf.
     //       NB we dont need to do this if for any PCFs already in our present_pcfs map
     //       NBB we can just do the usual routine of: decode, filter by particle_system_map, and reindex
-    //           once done, we can just add these PCFs to processed_pcfs
+    //           - once done, we can just add these PCFs to processed_pcfs
 
     // TODO: investigate blood_trail.pcf -> npc_fx.pc "hacky fix for blood_trail being so small"
+
+    // we can finally generate our _dazzle_preloader VPKs from our addon contents.
+    vpk_writer::pack_directory(
+        &app.vpk_working_dir,
+        &app.vpk_out_dir,
+        "_dazzle_preloader",
+        SPLIT_BY_2GB,
+    )?;
+
+    // NOTE(dress) after packing everything, cueki does a full-scan of every VPK & file in tf/custom for $ignorez 1 then
+    //             replaces each with spaces. This isn't necessary at all, so we just don't do it; anyone can bypass her
+    //             code with a modicum of motivation and python knoweledge. Considering how easy it is to remove it from
+    //             her preloader, I wouldn't be surprised if I frequently run into people using $ignorez trickfoolery in
+    //             pubs.
+
+    // TODO: install/restore modified gameinfo.txt VDF
 
     /*
        TODO/Spike:
