@@ -2,16 +2,16 @@ use anyhow::anyhow;
 use copy_dir::copy_dir;
 use glob::glob;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
-    io::{self, BufWriter},
+    io::{self, BufWriter, Read},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
-use typed_path::{PlatformPath, Utf8PlatformPath, Utf8PlatformPathBuf};
+use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 use vpk::VPK;
 
-use crate::paths::std_to_typed;
+use crate::paths::{self, std_to_typed};
 
 #[derive(Debug)]
 pub struct Info {
@@ -30,8 +30,37 @@ pub struct Addon {
     /// the path to the source file (vpk) or folder of the addon content
     pub source_path: Utf8PlatformPathBuf,
 
-    /// A list of PCF names provided by the addon
+    /// A set of absolute VTF paths, provided by the addon
+    pub texture_files: HashSet<Utf8PlatformPathBuf>,
+
+    /// A map of absolute VMT paths to decoded VMTs, provided by the addon
+    pub material_files: HashMap<Utf8PlatformPathBuf, Material>,
+
+    pub relative_material_files: hashbrown::HashMap<String, Material>,
+
+    /// A map of absolute PCF paths to decoded PCFs, provided by the addon
     pub particle_files: HashMap<Utf8PlatformPathBuf, pcf::Pcf>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Material {
+    /// the path to this material, relative to `{path_to_game}/materials/`
+    pub relative_path: Utf8PlatformPathBuf,
+
+    /// $basetexture value if specified in the material
+    pub base_texture: Option<String>,
+
+    /// $detail value if specified in the material
+    pub detail: Option<String>,
+
+    /// $ramptexture value if specified in the material
+    pub ramp_texture: Option<String>,
+
+    /// $normalmap value if specified in the material
+    pub normal_map: Option<String>,
+
+    /// $normalmap2 value if specified in the material
+    pub normal_map_2: Option<String>,
 }
 
 #[derive(Debug)]
@@ -55,16 +84,73 @@ impl Extracted {
         let particles_path = self.content_path.join_checked("particles")?;
         for path in glob(&format!("{particles_path}/*.pcf"))? {
             let path = path?;
-            let path = Utf8PlatformPath::from_bytes_path(PlatformPath::new(path.as_os_str().as_encoded_bytes()))?;
+            let path = paths::to_typed(&path);
 
-            let mut file = File::open_buffered(path)?;
+            let mut file = File::open_buffered(path.as_ref())?;
             let pcf = pcf::Pcf::decode(&mut file)?;
-            particle_files.insert(path.to_path_buf(), pcf);
+            particle_files.insert(path.into_owned(), pcf);
+        }
+
+        let mut relative_material_files = hashbrown::HashMap::new();
+        let mut material_files = HashMap::new();
+        let materials_path = self.content_path.join_checked("materials")?;
+        for path in glob(&format!("{}/**/*.vmt", &materials_path))? {
+            let path = path?;
+            let path = paths::to_typed(&path).absolutize()?;
+            let relative_path = path.strip_prefix(&materials_path)?.to_owned();
+
+            let mut vmt_buf = String::new();
+            File::open_buffered(&path)?
+                .read_to_string(&mut vmt_buf)?;
+
+            let root = keyvalues_parser::parse(&vmt_buf)?;
+
+            // vtf parameters will always be keys on the first value
+            let keyvalues_parser::Value::Obj(values) = root.value else {
+                return Err(anyhow!("malformed VMT '{}'", &path));
+            };
+
+            let mut material = Material {
+                relative_path: relative_path.clone(),
+                base_texture: None,
+                detail: None,
+                ramp_texture: None,
+                normal_map: None,
+                normal_map_2: None,
+            };
+
+            for (key, values) in values.iter() {
+                let Some(keyvalues_parser::Value::Str(value)) = values.first() else {
+                    continue;
+                };
+
+                match key as &str {
+                    "$basetexture" => material.base_texture = Some(value.clone().into_owned()),
+                    "$detail" => material.detail = Some(value.clone().into_owned()),
+                    "$ramptexture" => material.ramp_texture = Some(value.clone().into_owned()),
+                    "$normalmap" => material.normal_map = Some(value.clone().into_owned()),
+                    "$normalmap2" => material.normal_map_2 = Some(value.clone().into_owned()),
+                    _ => {},
+                }
+            }
+
+            relative_material_files.insert(relative_path.into_string(), material.clone());
+            material_files.insert(path, material);
+        }
+
+        let mut texture_files = HashSet::new();
+        for path in glob(&format!("{}/**/*.vmt", &materials_path))? {
+            let path = path?;
+            let path = paths::to_typed(&path).absolutize()?;
+            texture_files.insert(path);
         }
 
         Ok(Addon {
             content_path: self.content_path,
             source_path: self.source_path,
+            texture_files,
+            material_files,
+            relative_material_files,
             particle_files,
         })
     }

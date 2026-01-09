@@ -9,6 +9,10 @@ license = "Apache-2.0"
 default-members = [ ".", ]
 members = [ ".", "pcf", ]
 
+[features]
+default = []
+split_item_fx_pcf = []
+
 [dependencies]
 anyhow = "1.0"
 pcf = { version = "0.1.0", path = "pcf" }
@@ -24,6 +28,8 @@ single-instance = "0.3"
 typed-path = "0.11"
 serde_json = "1.0"
 ordermap = "1.0"
+keyvalues-parser = "0.2"
+hashbrown = "0.16"
 
 [build-dependencies]
 copy_to_output = "2.2.0"
