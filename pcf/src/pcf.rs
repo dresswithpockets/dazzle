@@ -722,7 +722,7 @@ impl Pcf {
     pub fn encode(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
         Self::write_magic_version(&self.version, file)?;
         Self::write_strings(&self.strings, file)?;
-        Self::write_elements(&self.root, &self.elements, file)?;
+        self.write_elements(file)?;
 
         Ok(())
     }
@@ -744,20 +744,25 @@ impl Pcf {
         Ok(())
     }
 
-    fn write_elements(root: &Root, elements: &Vec<Element>, file: &mut impl std::io::Write) -> anyhow::Result<()> {
-        file.write_u32::<LittleEndian>(elements.len() as u32 + 1)?;
+    fn write_elements(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
+        // we add 1 because root isn't accounted for in the elements vec
+        file.write_u32::<LittleEndian>(self.elements.len() as u32 + 1)?;
 
-        file.write_u16::<LittleEndian>(root.type_idx)?;
-        file.write_all(root.name.to_bytes_with_nul())?;
-        file.write_all(&root.signature)?;
+        file.write_u16::<LittleEndian>(self.root.type_idx)?;
+        file.write_all(self.root.name.to_bytes_with_nul())?;
+        file.write_all(&self.root.signature)?;
 
-        for element in elements {
+        for element in &self.elements {
             file.write_u16::<LittleEndian>(element.type_idx)?;
             file.write_all(element.name.to_bytes_with_nul())?;
             file.write_all(&element.signature)?;
         }
 
-        AttributeWriter::from(file).write_attributes(&root.definitions, elements)?;
+        AttributeWriter::from(file).write_attributes(
+            self.strings.particle_system_definitions_name_idx,
+            &self.root.definitions,
+            &self.elements
+        )?;
 
         Ok(())
     }
@@ -784,7 +789,8 @@ mod tests {
         assert_eq!(pcf.strings.strings()[160], c"end time max");
         assert_eq!(pcf.strings.strings()[220], c"warp max");
 
-        assert_eq!(pcf.elements.len(), 2028);
+        assert_eq!(pcf.root.definitions.len(), 171);
+        assert_eq!(pcf.elements.len(), 2027);
 
         let buf = BytesMut::with_capacity(TEST_PCF.len());
         let mut writer = buf.writer();
