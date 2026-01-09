@@ -4,9 +4,8 @@
 //!
 //! Decode & modify a pcf file using a buffered reader:
 //! ```
-//!     let file = File::open("particles.pcf")?;
-//!     let mut reader = BufReader::new(file);
-//!     let mut pcf = Pcf::decode(reader)?;
+//!     let mut file = File::open_buffered("particles.pcf")?;
+//!     let mut pcf = pcf::decode(&mut reader)?;
 //!     println!("particles.pcf has {} particle systems.", pcf.elements.len());
 //!     // modify pcf elements or attributes...
 //!     // ...
@@ -14,9 +13,8 @@
 //!
 //! Encode a pcf back into a file
 //! ```
-//!     let file = File::open("new_particles.pcf")?;
-//!     let mut writer = BufWriter::new(file);
-//!     pcf.encode(writer)?;
+//!     let mut file = OpenOptions::new().create(true).write(true).open("new_particles.pcf")?;
+//!     pcf.encode(&mut file)?;
 //! ```
 
 #![feature(buf_read_has_data_left)]
