@@ -559,21 +559,53 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    // ensuring that any non-vanilla materials required by our PCFs are copied over to our working directory
     for (material_name, (addon, material)) in materials {
         let from_materials_path = addon.content_path.join_checked("materials")?;
         let to_materials_path = app.vpk_working_dir.join_checked("materials")?;
 
-        let from_path = from_materials_path.join_checked(&material.relative_path)?.with_extension("vmt");
-        let to_path = to_materials_path.join_checked(material_name)?.with_extension("vmt");
+        let from_path = from_materials_path.join_checked(&material.relative_path)?;
+        let to_path = to_materials_path.join_checked(material_name)?;
         if let Err(err) = copy(&from_path, &to_path) {
             eprintln!("There was an error copying the extracted material '{}' to '{to_path}': {err}", &material.relative_path);
             process::exit(1);
         }
 
-        if let Some(texture_name) = &material.base_texture {
-            let from_path = from_materials_path.join_checked(texture_name)?.with_extension("vtf");
-            let to_path = to_materials_path.join_checked(texture_name)?.with_extension("vtf");
-            if let Err(err) = copy(&from_path, &to_path) {
+        if let Some(texture_name) = &material.base_texture && let Some(from_path) = addon.texture_files.get(texture_name) {
+            let to_path = to_materials_path.join_checked(texture_name)?;
+            if let Err(err) = copy(from_path, &to_path) {
+                eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
+                process::exit(1);
+            }
+        }
+
+        if let Some(texture_name) = &material.detail && let Some(from_path) = addon.texture_files.get(texture_name) {
+            let to_path = to_materials_path.join_checked(texture_name)?;
+            if let Err(err) = copy(from_path, &to_path) {
+                eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
+                process::exit(1);
+            }
+        }
+
+        if let Some(texture_name) = &material.ramp_texture && let Some(from_path) = addon.texture_files.get(texture_name) {
+            let to_path = to_materials_path.join_checked(texture_name)?;
+            if let Err(err) = copy(from_path, &to_path) {
+                eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
+                process::exit(1);
+            }
+        }
+
+        if let Some(texture_name) = &material.normal_map && let Some(from_path) = addon.texture_files.get(texture_name) {
+            let to_path = to_materials_path.join_checked(texture_name)?;
+            if let Err(err) = copy(from_path, &to_path) {
+                eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
+                process::exit(1);
+            }
+        }
+
+        if let Some(texture_name) = &material.normal_map_2 && let Some(from_path) = addon.texture_files.get(texture_name) {
+            let to_path = to_materials_path.join_checked(texture_name)?;
+            if let Err(err) = copy(from_path, &to_path) {
                 eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
                 process::exit(1);
             }

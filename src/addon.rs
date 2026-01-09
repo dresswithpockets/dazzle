@@ -2,10 +2,7 @@ use anyhow::anyhow;
 use copy_dir::copy_dir;
 use glob::glob;
 use std::{
-    collections::{HashMap, HashSet},
-    fs::{self, File, OpenOptions},
-    io::{self, BufWriter, Read},
-    path::{Path, PathBuf},
+    collections::HashMap, fs::{self, File, OpenOptions}, io::{self, BufWriter, Read}, path::{Path, PathBuf}
 };
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
@@ -31,12 +28,10 @@ pub struct Addon {
     pub source_path: Utf8PlatformPathBuf,
 
     /// A set of absolute VTF paths, provided by the addon
-    pub texture_files: HashSet<Utf8PlatformPathBuf>,
+    pub texture_files: HashMap<String, Utf8PlatformPathBuf>,
 
-    /// A map of absolute VMT paths to decoded VMTs, provided by the addon
-    pub material_files: HashMap<Utf8PlatformPathBuf, Material>,
-
-    pub relative_material_files: hashbrown::HashMap<String, Material>,
+    /// A map of "{addon}/materials/"-relative VMT paths to decoded VMTs, provided by the addon
+    pub relative_material_files: HashMap<String, Material>,
 
     /// A map of absolute PCF paths to decoded PCFs, provided by the addon
     pub particle_files: HashMap<Utf8PlatformPathBuf, pcf::Pcf>,
@@ -70,34 +65,21 @@ pub struct Extracted {
 }
 
 impl Extracted {
-    /// parses the contents of an extracted addon into an [`Addon`].
-    ///
-    /// # Errors
-    ///
-    /// May return [`Err`] if:
-    ///
-    /// - iterating over extracted files fails
-    /// - some [`std::io::Error`] when opening or reading files
-    /// - the addon contains invalid or inoperable parts, such as a corrupted PCF.
-    pub fn parse_content(self) -> anyhow::Result<Addon> {
-        let mut particle_files = HashMap::new();
-        let particles_path = self.content_path.join_checked("particles")?;
-        for path in glob(&format!("{particles_path}/*.pcf"))? {
-            let path = path?;
-            let path = paths::to_typed(&path);
-
-            let mut file = File::open_buffered(path.as_ref())?;
-            let pcf = pcf::Pcf::decode(&mut file)?;
-            particle_files.insert(path.into_owned(), pcf);
+    fn get_material_files(materials_path: &Utf8PlatformPath) -> anyhow::Result<HashMap<String, Material>>  {
+        fn value_to_texture_name(cow: &str) -> String {
+            let owned = cow.to_owned();
+            if owned.eq_ignore_ascii_case(".vtf") {
+                owned
+            } else {
+                owned + ".vtf"
+            }
         }
 
-        let mut relative_material_files = hashbrown::HashMap::new();
-        let mut material_files = HashMap::new();
-        let materials_path = self.content_path.join_checked("materials")?;
-        for path in glob(&format!("{}/**/*.vmt", &materials_path))? {
+        let mut relative_material_files = HashMap::new();
+        for path in glob(&format!("{materials_path}/**/*.vmt"))? {
             let path = path?;
             let path = paths::to_typed(&path).absolutize()?;
-            let relative_path = path.strip_prefix(&materials_path)?.to_owned();
+            let relative_path = path.strip_prefix(materials_path)?.to_owned();
 
             let mut vmt_buf = String::new();
             File::open_buffered(&path)?
@@ -125,31 +107,57 @@ impl Extracted {
                 };
 
                 match key as &str {
-                    "$basetexture" => material.base_texture = Some(value.clone().into_owned()),
-                    "$detail" => material.detail = Some(value.clone().into_owned()),
-                    "$ramptexture" => material.ramp_texture = Some(value.clone().into_owned()),
-                    "$normalmap" => material.normal_map = Some(value.clone().into_owned()),
-                    "$normalmap2" => material.normal_map_2 = Some(value.clone().into_owned()),
+                    "$basetexture" => material.base_texture = Some(value_to_texture_name(value)),
+                    "$detail" => material.detail = Some(value_to_texture_name(value)),
+                    "$ramptexture" => material.ramp_texture = Some(value_to_texture_name(value)),
+                    "$normalmap" => material.normal_map = Some(value_to_texture_name(value)),
+                    "$normalmap2" => material.normal_map_2 = Some(value_to_texture_name(value)),
                     _ => {},
                 }
             }
 
             relative_material_files.insert(relative_path.into_string(), material.clone());
-            material_files.insert(path, material);
         }
 
-        let mut texture_files = HashSet::new();
-        for path in glob(&format!("{}/**/*.vmt", &materials_path))? {
+        Ok(relative_material_files)
+    }
+
+    /// parses the contents of an extracted addon into an [`Addon`].
+    ///
+    /// # Errors
+    ///
+    /// May return [`Err`] if:
+    ///
+    /// - iterating over extracted files fails
+    /// - some [`std::io::Error`] when opening or reading files
+    /// - the addon contains invalid or inoperable parts, such as a corrupted PCF.
+    pub fn parse_content(self) -> anyhow::Result<Addon> {
+        let mut particle_files = HashMap::new();
+        let particles_path = self.content_path.join_checked("particles")?;
+        for path in glob(&format!("{particles_path}/*.pcf"))? {
+            let path = path?;
+            let path = paths::to_typed(&path);
+
+            let mut file = File::open_buffered(path.as_ref())?;
+            let pcf = pcf::Pcf::decode(&mut file)?;
+            particle_files.insert(path.into_owned(), pcf);
+        }
+        
+        let materials_path = self.content_path.join_checked("materials")?;
+        let relative_material_files = Self::get_material_files(&materials_path)?;
+
+        let mut texture_files = HashMap::new();
+        for path in glob(&format!("{}/**/*.vtf", &materials_path))? {
             let path = path?;
             let path = paths::to_typed(&path).absolutize()?;
-            texture_files.insert(path);
+            let relative_path = path.strip_prefix(&materials_path)?;
+            texture_files.insert(relative_path.to_string(), path);
         }
 
         Ok(Addon {
             content_path: self.content_path,
             source_path: self.source_path,
             texture_files,
-            material_files,
             relative_material_files,
             particle_files,
         })
