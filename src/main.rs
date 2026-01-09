@@ -29,7 +29,7 @@
 #![feature(push_mut)]
 
 pub mod addon;
-pub mod vpk;
+pub mod patch;
 
 use std::{
     collections::{BTreeMap, HashMap}, ffi::CString, fs::{self, File, copy}, io::{self}, path::PathBuf, process, str::FromStr
@@ -42,7 +42,7 @@ use single_instance::SingleInstance;
 use typed_path::Utf8PlatformPathBuf;
 
 use crate::addon::{Addon, Sources};
-use crate::vpk::{PatchVpkExt, VPK};
+use crate::patch::PatchVpkExt;
 
 struct App {
     _config_dir: Utf8PlatformPathBuf,
@@ -437,7 +437,7 @@ fn main() -> anyhow::Result<()> {
     // TODO: prompt user to verify or provide their own tf directory after discovery attempt
 
     let vpk_path = tf_dir.join(TF2_VPK_NAME);
-    let mut misc_vpk = match VPK::read(vpk_path) {
+    let mut misc_vpk = match vpk::VPK::read(vpk_path) {
         Ok(vpk) => vpk,
         Err(err) => {
             eprintln!("Couldn't open tf/tf2_misc_dir.vpk: {err}");
@@ -513,7 +513,7 @@ fn main() -> anyhow::Result<()> {
         for (target_pcf_path, pcf_files) in processed_target_pcf_paths {
             let full_pcf_path = app.backup_dir.join_checked(target_pcf_path)?;
             let mut reader = File::open_buffered(full_pcf_path)?;
-            let target_pcf = Pcf::decode(&mut reader)?;
+            let target_pcf = pcf::decode(&mut reader)?;
             
             let (new_pcf_path, new_pcf) = App::process_mapped_particles(target_pcf_path, target_pcf, pcf_files)?;
             processed_pcfs.entry(new_pcf_path).or_insert(ProcessedPcf {
@@ -618,7 +618,7 @@ fn main() -> anyhow::Result<()> {
         process::exit(1);
     }
 
-    // TODO: if addon-provided required materials reference addon-provided textures, then copy those textures to the to-be-vpk directory
+    // TODO: create a new VPK from our vpk working directory, we need to split VPKs into max-2GB VPKs.
 
     // TODO: de-duplicate elements in item_fx.pcf, halloween.pcf, bigboom.pcf, and dirty_explode.pcf.
     //       NB we dont need to do this if for any PCFs already in our present_pcfs map

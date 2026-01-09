@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use copy_dir::copy_dir;
 use glob::glob;
 use std::{
-    collections::HashMap, fs::{self, File, OpenOptions}, io::{self, BufWriter, Read}, path::{Path, PathBuf}
+    collections::HashMap, fs::{self, File, OpenOptions}, io::{self, Read}, path::{Path, PathBuf}
 };
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
@@ -82,7 +82,7 @@ impl Extracted {
             let relative_path = path.strip_prefix(materials_path)?.to_owned();
 
             let mut vmt_buf = String::new();
-            File::open_buffered(&path)?
+            File::open(&path)?
                 .read_to_string(&mut vmt_buf)?;
 
             let root = keyvalues_parser::parse(&vmt_buf)?;
@@ -139,7 +139,7 @@ impl Extracted {
             let path = paths::to_typed(&path);
 
             let mut file = File::open_buffered(path.as_ref())?;
-            let pcf = pcf::Pcf::decode(&mut file)?;
+            let pcf = pcf::decode(&mut file)?;
             particle_files.insert(path.into_owned(), pcf);
         }
         
@@ -317,8 +317,7 @@ impl Source {
                 fs::create_dir_all(parent)?;
             }
 
-            let extracted_file = OpenOptions::new().write(true).create_new(true).open(&file_path)?;
-            let mut extracted_file = BufWriter::new(extracted_file);
+            let mut extracted_file = OpenOptions::new().write(true).create_new(true).open(&file_path)?;
 
             let entry_size = u64::from(entry.dir_entry.file_length) + u64::from(entry.dir_entry.preload_length);
             let copied = io::copy(&mut file_in_vpk, &mut extracted_file)?;
