@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use glob::glob;
 use std::{
     fs::{File, OpenOptions},
-    io::{self, BufReader, BufWriter, Seek, SeekFrom},
+    io::{self, BufReader, Seek, SeekFrom},
     path::Path,
 };
 
@@ -80,9 +80,10 @@ impl PatchVpkExt for vpk::VPK {
         let new_file = File::open(path_on_disk)?;
         let mut new_file = BufReader::new(new_file);
 
-        let archive_file = OpenOptions::new().write(true).open(archive_path.as_ref())?;
-        let mut archive_file = BufWriter::new(archive_file);
+        let mut archive_file = OpenOptions::new().write(true).open(archive_path.as_ref())?;
         archive_file.seek(SeekFrom::Start(u64::from(entry.dir_entry.archive_offset)))?;
+
+        // TODO!: this is probably _inserting_ new data, not _replacing_ existing data
 
         let copied = io::copy(&mut new_file, &mut archive_file)?;
         if copied != entry_size {
