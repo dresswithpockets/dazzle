@@ -688,7 +688,8 @@ impl Pcf {
             });
         }
 
-        let attributes: Result<Vec<_>, _> = AttributeReader::try_from(file, element_count)?.into_iter().collect();
+        // we add one to element_count since AttributeReader will read root's attributes + elements' attributes
+        let attributes: Result<Vec<_>, _> = AttributeReader::try_from(file, element_count + 1)?.into_iter().collect();
         let mut attributes = attributes?;
 
         let (0, name_idx, Attribute::ElementArray(root_definitions)) = attributes.remove(0) else {
@@ -701,7 +702,9 @@ impl Pcf {
 
         let attributes = attributes.into_iter().chunk_by(|el| el.0);
         for (element_idx, group) in attributes.into_iter() {
-            let element = elements.get_mut(element_idx).expect("this should never happen");
+            // the element_idx returned by the attribute reader includes root at 0, but we took root out of the list
+            // so we need to subtract 1 from the idx
+            let element = elements.get_mut(element_idx - 1).expect("this should never happen");
             element.attributes = group.map(|el| (el.1, el.2)).collect();
         }
 
@@ -720,31 +723,32 @@ impl Pcf {
 // writing functions
 impl Pcf {
     pub fn encode(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
-        Self::write_magic_version(&self.version, file)?;
-        Self::write_strings(&self.strings, file)?;
+        self.write_magic_version(file)?;
+        self.write_strings(file)?;
         self.write_elements(file)?;
+        self.write_element_attributes(file)?;
 
         Ok(())
     }
 
-    fn write_magic_version(version: &Version, file: &mut impl std::io::Write) -> anyhow::Result<()> {
-        let version = version.as_cstr_with_nul_terminator().to_bytes_with_nul();
+    pub(crate) fn write_magic_version(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
+        let version = self.version.as_cstr_with_nul_terminator().to_bytes_with_nul();
         file.write_all(version)?;
 
         Ok(())
     }
 
-    fn write_strings(strings: &Symbols, file: &mut impl std::io::Write) -> anyhow::Result<()> {
-        file.write_u16::<LittleEndian>(strings.len() as u16)?;
+    pub(crate) fn write_strings(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
+        file.write_u16::<LittleEndian>(self.strings.len() as u16)?;
 
-        for (string, _) in &strings.base {
+        for (string, _) in &self.strings.base {
             file.write_all(string.to_bytes_with_nul())?;
         }
 
         Ok(())
     }
 
-    fn write_elements(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
+    pub(crate) fn write_elements(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
         // we add 1 because root isn't accounted for in the elements vec
         file.write_u32::<LittleEndian>(self.elements.len() as u32 + 1)?;
 
@@ -758,6 +762,10 @@ impl Pcf {
             file.write_all(&element.signature)?;
         }
 
+        Ok(())
+    }
+
+    pub(crate) fn write_element_attributes(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
         AttributeWriter::from(file).write_attributes(
             self.strings.particle_system_definitions_name_idx,
             &self.root.definitions,
@@ -770,6 +778,8 @@ impl Pcf {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::OpenOptions;
+
     use bytes::{Buf, BufMut, Bytes, BytesMut};
 
     use super::*;
@@ -794,8 +804,22 @@ mod tests {
 
         let buf = BytesMut::with_capacity(TEST_PCF.len());
         let mut writer = buf.writer();
-        pcf.encode(&mut writer).expect("writing failed");
+        pcf.write_magic_version(&mut writer).expect("writing failed");
 
+        let bytes = writer.get_ref();
+        assert_eq!(bytes.len(), 45);
+
+        pcf.write_strings(&mut writer).expect("writing failed");
+
+        let bytes = writer.get_ref();
+        assert_eq!(bytes.len(), 4627);
+
+        pcf.write_elements(&mut writer).expect("writing failed");
+
+        let bytes = writer.get_ref();
+        assert_eq!(bytes.len(), 82526);
+
+        pcf.write_element_attributes(&mut writer).expect("writing failed");
         let bytes = writer.get_ref();
         assert_eq!(TEST_PCF.len(), bytes.len());
         assert_eq!(
