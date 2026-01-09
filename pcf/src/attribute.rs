@@ -5,7 +5,7 @@ use derive_more::{From, Into};
 use ordered_float::OrderedFloat;
 use thiserror::Error;
 
-use crate::pcf::{Element, Root};
+use crate::pcf::Element;
 
 pub type NameIndex = u16;
 
@@ -326,14 +326,14 @@ impl<'a, W: io::Write> AttributeWriter<'a, W> {
 
     pub fn write_attributes(
         &mut self,
-        root_definitions: &Box<[u32]>,
+        root_definitions: &[u32],
         elements: &Vec<Element>,
     ) -> Result<(), io::Error> {
         const ELEMENT_ARRAY_TYPE: u8 = 15;
 
         // the root element always has only 1 attribute, and the element array type is always 15.
         self.writer.write_u32::<LittleEndian>(1)?;
-        self.writer.write_u8(ELEMENT_ARRAY_TYPE);
+        self.writer.write_u8(ELEMENT_ARRAY_TYPE)?;
         self.write_array(root_definitions)?;
 
         for element in elements {
