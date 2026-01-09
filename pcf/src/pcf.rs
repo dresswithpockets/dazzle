@@ -21,7 +21,7 @@ pub enum Version {
 }
 
 impl Display for Version {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.write_str(match self {
             Version::Binary2Dmx1 => "Binary2Dmx1",
             Version::Binary2Pcf1 => "Binary2Pcf1",
@@ -104,10 +104,94 @@ pub struct Root {
 /// - all elements are either a particle system, or a child element of a particle system's definition tree
 pub struct Pcf {
     pub version: Version,
-    pub strings: OrderMap<CString, ()>,
+    pub strings: Symbols,
     pub root: Root,
     pub elements: Vec<Element>,
     elements_by_name: HashMap<CString, u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Symbols {
+    particle_system_definitions_name_idx: NameIndex,
+    particle_system_definition_type_idx: NameIndex,
+    material_name_idx: NameIndex,
+    base: OrderMap<CString, ()>,
+}
+
+impl Symbols {
+    pub fn iter(&self) -> ordermap::map::Iter<'_, std::ffi::CString, ()> {
+        self.base.iter()
+    }
+
+    fn get_index(&self, idx: usize) -> Option<(&CString, &())> {
+        self.base.get_index(idx)
+    }
+
+    fn entry(&mut self, key: CString) -> ordermap::map::Entry<'_, std::ffi::CString, ()> {
+        self.base.entry(key)
+    }
+
+    #[allow(dead_code)]
+    fn strings(&self) -> ordermap::map::Keys<'_, std::ffi::CString, ()> {
+        self.base.keys()
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.base.len()
+    }
+}
+
+impl IntoIterator for Symbols {
+    type Item = (CString, ());
+
+    type IntoIter = ordermap::map::IntoIter<CString, ()>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.base.into_iter()
+    }
+}
+
+impl TryFrom<OrderMap<CString, ()>> for Symbols {
+    type Error = Error;
+
+    fn try_from(base: OrderMap<CString, ()>) -> Result<Self, Self::Error> {
+        // particleSystemDefinitions
+        // DmeParticleSystemDefinition
+
+        let particle_system_definitions_name_idx = base
+            .iter()
+            .find_position(|el| el.0 == c"particleSystemDefinitions")
+            .ok_or(Error::MissingRootDefinitionString)?
+            .0 as NameIndex;
+
+        let particle_system_definition_type_idx = base
+            .iter()
+            .find_position(|el| el.0 == c"DmeParticleSystemDefinition")
+            .ok_or(Error::MissingSystemDefinitionString)?
+            .0 as NameIndex;
+
+        let material_name_idx = base
+            .iter()
+            .find_position(|el| el.0 == c"material")
+            .ok_or(Error::MissingSystemDefinitionString)?
+            .0 as NameIndex;
+
+        Ok(Self {
+            particle_system_definitions_name_idx,
+            particle_system_definition_type_idx,
+            material_name_idx,
+            base,
+        })
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum GetError {
+    #[error(
+        "our strings list is missing 'DmeParticleSystemDefinition'. Adding this string may require elements to be fixed up."
+    )]
+    MissingSystemDefinitionString,
 }
 
 #[derive(Debug, Error)]
@@ -303,7 +387,7 @@ impl Pcf {
     pub fn builder() -> PcfBuilder<NoVersion, NoStrings, NoElements, NoRoot> {
         PcfBuilder {
             version: NoVersion,
-            strings: Vec::new(),
+            strings: NoStrings,
             root: NoRoot,
             elements: Vec::new(),
             elements_by_name: HashMap::new(),
@@ -352,14 +436,23 @@ impl Pcf {
 
         (name_idx, attribute)
     }
+    
+    pub fn get_particle_system_definitions(&self) -> impl Iterator<Item = &Element> {
+        self.elements.iter().filter(|el| el.type_idx == self.strings.particle_system_definition_type_idx)
+    }
+
+    pub fn get_material<'a>(&'a self, element: &'a Element) -> Option<&'a CString> {
+        match element.attributes.get(&self.strings.material_name_idx) {
+            Some(Attribute::String(material)) => Some(material),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Default, Debug, PartialEq)]
 pub struct NoVersion;
 #[derive(Default, Debug, PartialEq)]
 pub struct NoStrings;
-#[derive(Default, Debug, PartialEq)]
-pub struct Strings;
 #[derive(Default, Debug, PartialEq)]
 pub struct NoElements;
 #[derive(Default, Debug, PartialEq)]
@@ -370,7 +463,7 @@ pub struct Elements;
 #[derive(Default, Debug)]
 pub struct PcfBuilder<A, B, C, D> {
     version: A,
-    strings: Vec<CString>,
+    strings: B,
     root: D,
     elements: Vec<Element>,
     elements_by_name: HashMap<CString, u32>,
@@ -379,11 +472,11 @@ pub struct PcfBuilder<A, B, C, D> {
     _phantom_elements: PhantomData<C>,
 }
 
-impl PcfBuilder<Version, Strings, Elements, Root> {
+impl PcfBuilder<Version, Symbols, Elements, Root> {
     pub fn build(self) -> Pcf {
         Pcf {
             version: self.version,
-            strings: self.strings.into_iter().map(|el| (el, ())).collect(),
+            strings: self.strings,
             root: self.root,
             elements: self.elements,
             elements_by_name: self.elements_by_name,
@@ -406,36 +499,7 @@ impl<B, C, D> PcfBuilder<NoVersion, B, C, D> {
 }
 
 impl<A, C, D> PcfBuilder<A, NoStrings, C, D> {
-    pub fn strings(self, strings: Vec<CString>) -> PcfBuilder<A, Strings, C, D> {
-        PcfBuilder {
-            version: self.version,
-            strings,
-            root: self.root,
-            elements: self.elements,
-            elements_by_name: self.elements_by_name,
-            _phantom_elements: PhantomData,
-            _phantom_strings: PhantomData,
-        }
-    }
-
-    pub fn string(self, string: CString) -> PcfBuilder<A, Strings, C, D> {
-        PcfBuilder {
-            version: self.version,
-            strings: vec![string],
-            root: self.root,
-            elements: self.elements,
-            elements_by_name: self.elements_by_name,
-            _phantom_elements: PhantomData,
-            _phantom_strings: PhantomData,
-        }
-    }
-}
-
-impl<A, C, D> PcfBuilder<A, Strings, C, D> {
-    pub fn string(self, string: CString) -> PcfBuilder<A, Strings, C, D> {
-        let mut strings = self.strings;
-        strings.push(string);
-
+    pub fn strings(self, strings: Symbols) -> PcfBuilder<A, Symbols, C, D> {
         PcfBuilder {
             version: self.version,
             strings,
@@ -538,6 +602,12 @@ pub enum Error {
     #[error("The DMX string list does not contain 'particleSystemDefinitions', so it cant be a valid PCF")]
     MissingRootDefinitionString,
 
+    #[error("The DMX string list does not contain 'DmeParticleSystemDefinition', so it cant be a valid PCF")]
+    MissingSystemDefinitionString,
+
+    #[error("The DMX string list does not contain 'material', so it cant be a valid PCF")]
+    MissingMaterialString,
+
     #[error(
         "The DMX element list does not contain a valid root element with a particle systems definition list, so it cant be a valid PCF"
     )]
@@ -550,13 +620,7 @@ impl Pcf {
         let version = Self::read_magic_version(buf)?;
         let strings = Self::read_strings(buf)?;
 
-        let definitions_name_idx = strings
-            .iter()
-            .find_position(|el| el.0 == c"particleSystemDefinitions")
-            .ok_or(Error::MissingRootDefinitionString)?
-            .0 as NameIndex;
-
-        let (root, elements) = Self::read_elements(definitions_name_idx, buf)?;
+        let (root, elements) = Self::read_elements(strings.particle_system_definitions_name_idx, buf)?;
 
         let mut elements_by_name = HashMap::new();
         for (idx, element) in elements.iter().enumerate() {
@@ -588,12 +652,14 @@ impl Pcf {
         Ok(version)
     }
 
-    fn read_strings(file: &mut impl std::io::BufRead) -> Result<OrderMap<CString, ()>, Error> {
+    fn read_strings(file: &mut impl std::io::BufRead) -> Result<Symbols, Error> {
         let string_count = file.read_u16::<LittleEndian>()? as usize;
         let mut strings = OrderMap::with_capacity(string_count);
         for _ in 0..string_count {
             strings.insert(Self::read_terminated_string(file)?, ());
         }
+
+        let strings = Symbols::try_from(strings)?;
 
         Ok(strings)
     }
@@ -668,10 +734,10 @@ impl Pcf {
         Ok(())
     }
 
-    fn write_strings(strings: &OrderMap<CString, ()>, file: &mut impl std::io::Write) -> anyhow::Result<()> {
+    fn write_strings(strings: &Symbols, file: &mut impl std::io::Write) -> anyhow::Result<()> {
         file.write_u16::<LittleEndian>(strings.len() as u16)?;
 
-        for (string, _) in strings {
+        for (string, _) in &strings.base {
             file.write_all(string.to_bytes_with_nul())?;
         }
 
@@ -714,9 +780,9 @@ mod tests {
         assert_eq!(pcf.strings.len(), 231);
 
         // spot checking a few random strings to ensure they're correct
-        assert_eq!(pcf.strings.keys()[79], c"rotation_offset_max");
-        assert_eq!(pcf.strings.keys()[160], c"end time max");
-        assert_eq!(pcf.strings.keys()[220], c"warp max");
+        assert_eq!(pcf.strings.strings()[79], c"rotation_offset_max");
+        assert_eq!(pcf.strings.strings()[160], c"end time max");
+        assert_eq!(pcf.strings.strings()[220], c"warp max");
 
         assert_eq!(pcf.elements.len(), 2028);
 
