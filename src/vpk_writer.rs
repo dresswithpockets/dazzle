@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fs::{self, File, OpenOptions}, io::{self, BufWriter, Read, Seek, Write}, os::unix::fs::MetadataExt};
+use std::{
+    collections::HashMap,
+    fs::{self, File, OpenOptions},
+    io::{self, BufWriter, Read, Seek, Write},
+    os::unix::fs::MetadataExt,
+};
 
 use buf_read_write::BufStream;
 use byteorder::{LittleEndian, WriteBytesExt};
@@ -60,7 +65,6 @@ pub fn pack_directory(
     vpk_name: &str,
     split_size: u32,
 ) -> Result<(), Error> {
-
     if !fs::metadata(source)?.is_dir() {
         return Err(Error::SourceNotADirectory);
     }
@@ -77,11 +81,9 @@ pub fn pack_directory(
 
     if last_archive_idx == 0 {
         // we copied our 0th archive into _dir, so we need to drop the "_dir" and remove the 0th archive.
-        fs::remove_file(last_archive_path)
-            .map_err(Error::CantRemoveArchive0)?;
+        fs::remove_file(last_archive_path).map_err(Error::CantRemoveArchive0)?;
 
-        fs::rename(vpk_path, dest.join(vpk_name).with_extension("vpk"))
-            .map_err(Error::CantRenameDirArchive)?;
+        fs::rename(vpk_path, dest.join(vpk_name).with_extension("vpk")).map_err(Error::CantRenameDirArchive)?;
     }
 
     Ok(())
@@ -91,7 +93,7 @@ fn write_index_archive(
     last_archive_path: &Utf8PlatformPath,
     last_archive_idx: u16,
     tree: VpkTree<EntryInfo>,
-    vpk_path: &Utf8PlatformPath
+    vpk_path: &Utf8PlatformPath,
 ) -> Result<(), Error> {
     let mut stream = BufStream::new(
         OpenOptions::new()
@@ -100,7 +102,7 @@ fn write_index_archive(
             .read(true)
             .write(true)
             .open(vpk_path)
-            .map_err(Error::CantOpenDirVpk)?
+            .map_err(Error::CantOpenDirVpk)?,
     );
 
     const VPK_SIGNATURE: u32 = 0x55AA1234;
@@ -134,7 +136,7 @@ fn write_index_archive(
             for entry in entries {
                 _ = stream.write(entry.filename.as_bytes())?;
                 stream.write_u8(0)?;
-            
+
                 stream.write_u32::<LittleEndian>(entry.crc)?;
                 // this impl doesnt support writing preload data, so there is always 0
                 stream.write_u16::<LittleEndian>(0)?;
@@ -195,7 +197,7 @@ fn write_index_archive(
     stream.write_all(&tree_hash)?;
     stream.write_all(&chunk_hashes)?;
     stream.write_all(&file_hash)?;
-    
+
     stream.flush()?;
 
     Ok(())
@@ -210,11 +212,11 @@ fn write_tree(
     let mut archive_path = dest.join(format!("{vpk_name}_000.vpk"));
     let mut archive_file = BufWriter::new(
         OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&archive_path)
-        .map_err(Error::CantOpenVpk)?
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&archive_path)
+            .map_err(Error::CantOpenVpk)?,
     );
 
     let mut current_archive_idx = 0;
@@ -232,15 +234,16 @@ fn write_tree(
                     archive_path = dest.with_file_name(format!("{vpk_name}_{current_archive_idx:03}.vpk"));
                     archive_file = BufWriter::new(
                         OpenOptions::new()
-                        .create(true)
-                        .truncate(true)
-                        .write(true)
-                        .open(&archive_path)
-                        .map_err(Error::CantOpenVpk)?
+                            .create(true)
+                            .truncate(true)
+                            .write(true)
+                            .open(&archive_path)
+                            .map_err(Error::CantOpenVpk)?,
                     );
                 }
 
-                let results = fs::read(&entry.source_path).map_err(|err| Error::CantOpenEntrySource(entry.source_path, err))?;
+                let results =
+                    fs::read(&entry.source_path).map_err(|err| Error::CantOpenEntrySource(entry.source_path, err))?;
                 let checksum = crc32fast::hash(&results);
 
                 _ = archive_file.write(&results)?;
@@ -305,8 +308,10 @@ struct Directories<T: Sized>(HashMap<String, Vec<T>>);
 impl<T: Sized> VpkTree<T> {
     pub fn insert(&mut self, extension: &str, directory: &str, entry: T) {
         let Some(directories) = self.0.get_mut(extension) else {
-            self.0
-                .insert(extension.to_string(), Directories(HashMap::from([(directory.to_string(), vec![entry])])));
+            self.0.insert(
+                extension.to_string(),
+                Directories(HashMap::from([(directory.to_string(), vec![entry])])),
+            );
             return;
         };
 

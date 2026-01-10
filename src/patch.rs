@@ -3,7 +3,8 @@ use glob::glob;
 use std::{
     fs::{File, OpenOptions},
     io::{self, BufReader, Seek, SeekFrom},
-    path::Path, sync::Arc,
+    path::Path,
+    sync::Arc,
 };
 
 use relative_path::RelativePathBuf;
@@ -96,9 +97,10 @@ impl PrintVpkExt for vpk::VPK {
 
 impl PatchVpkExt for vpk::VPK {
     fn patch_file(&mut self, path_in_vpk: &str, path_on_disk: &Path) -> Result<(), PatchError> {
-        let entry = self.tree.get(path_in_vpk).ok_or_else(|| {
-            PatchError::NotFound(path_in_vpk.to_string())
-        })?;
+        let entry = self
+            .tree
+            .get(path_in_vpk)
+            .ok_or_else(|| PatchError::NotFound(path_in_vpk.to_string()))?;
 
         if entry.dir_entry.preload_length > 0 {
             return Err(PatchError::HasPreloadData);

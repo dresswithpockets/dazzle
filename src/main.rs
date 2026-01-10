@@ -50,8 +50,11 @@ use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf, Utf8UnixPathBuf};
 use vpk::VPK;
 
-use crate::{addon::{Addon, Sources}, patch::PrintVpkExt};
 use crate::patch::PatchVpkExt;
+use crate::{
+    addon::{Addon, Sources},
+    patch::PrintVpkExt,
+};
 
 const SPLIT_BY_2GB: u32 = 2 << 30;
 
