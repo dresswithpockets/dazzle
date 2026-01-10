@@ -37,17 +37,18 @@ use std::{
     ffi::CString,
     fs::{self, File, copy},
     io::{self},
-    path::PathBuf,
     process,
     str::FromStr,
 };
 
 use directories::ProjectDirs;
-use nanoserde::{DeJson, SerJson};
+use nanoserde::DeJson;
 use ordermap::OrderMap;
 use pcf::{ElementsExt, Pcf};
 use single_instance::SingleInstance;
-use typed_path::Utf8PlatformPathBuf;
+use thiserror::Error;
+use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf, Utf8UnixPathBuf};
+use vpk::VPK;
 
 use crate::addon::{Addon, Sources};
 use crate::patch::PatchVpkExt;
@@ -55,18 +56,17 @@ use crate::patch::PatchVpkExt;
 const SPLIT_BY_2GB: u64 = 2 << 30;
 
 struct App {
-    _config_dir: Utf8PlatformPathBuf,
-    _config_file: Utf8PlatformPathBuf,
     addons_dir: Utf8PlatformPathBuf,
-    extracted_addons_dir: Utf8PlatformPathBuf,
-    particles_working_dir: Utf8PlatformPathBuf,
+    extracted_content_dir: Utf8PlatformPathBuf,
     backup_dir: Utf8PlatformPathBuf,
-    vanilla_pcf_paths: Vec<Utf8PlatformPathBuf>,
-    pcf_to_particle_system: HashMap<String, Vec<CString>>,
-    particle_system_to_pcf: HashMap<CString, String>,
+    working_vpk_dir: Utf8PlatformPathBuf,
 
-    vpk_working_dir: Utf8PlatformPathBuf,
-    vpk_out_dir: Utf8PlatformPathBuf,
+    vanilla_pcf_paths: Vec<Utf8PlatformPathBuf>,
+    vanilla_pcf_to_systems: HashMap<String, Vec<CString>>,
+    vanilla_system_to_pcf: HashMap<CString, String>,
+
+    tf_misc_vpk: VPK,
+    tf_custom_dir: Utf8PlatformPathBuf,
 }
 
 impl App {
@@ -90,7 +90,7 @@ impl App {
             // grouping the elements from our addon by the vanilla PCF they're mapped to in particle_system_map.json.
             let mut elements_by_vanilla_pcf_path = HashMap::<&String, OrderMap<&CString, &pcf::Element>>::new();
             for element in &pcf.elements {
-                let Some(pcf_path) = self.particle_system_to_pcf.get(&element.name) else {
+                let Some(pcf_path) = self.vanilla_system_to_pcf.get(&element.name) else {
                     continue;
                 };
 
@@ -333,6 +333,194 @@ mod paths {
     }
 }
 
+const TF2_VPK_NAME: &str = "tf2_misc_dir.vpk";
+const APP_INSTANCE_NAME: &str = "net.dresswithpockets.tf2dazzle.lock";
+const APP_TLD: &str = "net";
+const APP_ORG: &str = "dresswithpockets";
+const APP_NAME: &str = "tf2dazzle";
+const PARTICLE_SYSTEM_MAP: &str = include_str!("particle_system_map.json");
+
+#[derive(Debug, Error)]
+enum BuildError {
+    #[error("couldn't verify that there is only a single instance of dazzle running, due to an internal error")]
+    CantInitSingleInstance(#[from] single_instance::error::SingleInstanceError),
+
+    #[error("there are multiple instances of dazzle running")]
+    MultipleInstances,
+
+    #[error("couldn't find a valid home directory, which is necessary for some operations")]
+    NoValidHomeDirectory,
+
+    #[error("couldn't clear the addon content cache, due to an IO error")]
+    CantClearContentCache(io::Error),
+
+    #[error("couldn't create the addon content cache, due to an IO error")]
+    CantCreateContentCache(io::Error),
+
+    #[error("couldn't clear the working VPK directory, due to an IO error")]
+    CantClearWorkingVpkDirectory(io::Error),
+
+    #[error("couldn't create the working VPK directory, due to an IO error")]
+    CantCreateWorkingVpkDirectory(io::Error),
+
+    #[error("couldn't create the addons directory, due to an IO error")]
+    CantCreateAddonsDirectory(io::Error),
+
+    #[error("couldn't find the backup assets directory")]
+    MissingBackupDirectory,
+
+    #[error("couldn't find the backup assets directory, due to an IO error")]
+    IoBackupDirectory(io::Error),
+
+    #[error("couldn't find the custom directory in the tf dir specified: '{0}''")]
+    MissingTfCustomDirectory(Utf8PlatformPathBuf),
+
+    #[error("couldn't find the custom directory in the tf dir specified: '{0}', due to an IO error")]
+    IoTfCustomDirectory(Utf8PlatformPathBuf, io::Error),
+
+    #[error("couldn't read tf2_misc_dir.vpk: {0}")]
+    CantReadMiscVpk(#[from] vpk::Error),
+}
+
+#[derive(Default)]
+struct AppBuilder {
+    tf_dir: Utf8PlatformPathBuf,
+}
+
+impl AppBuilder {
+    fn with_tf_dir(path: Utf8PlatformPathBuf) -> Self {
+        Self { tf_dir: path }
+    }
+
+    fn create_single_instance() -> Result<SingleInstance, BuildError> {
+        // TODO: single_instance's macos implementation might not be desirable since this program is intended to be portable... maybe we just dont support macos (:
+        let instance = SingleInstance::new(APP_INSTANCE_NAME)?;
+        if instance.is_single() {
+            Ok(instance)
+        } else {
+            Err(BuildError::MultipleInstances)
+        }
+    }
+
+    fn create_project_dirs() -> Result<ProjectDirs, BuildError> {
+        ProjectDirs::from(APP_TLD, APP_ORG, APP_NAME).ok_or(BuildError::NoValidHomeDirectory)
+    }
+
+    fn get_working_dir(dirs: &ProjectDirs) -> Utf8PlatformPathBuf {
+        let working_dir = dirs.data_local_dir().join("working");
+        paths::to_typed(&working_dir).into_owned()
+    }
+
+    fn create_new_content_cache_dir(dir: &Utf8PlatformPath) -> Result<Utf8PlatformPathBuf, BuildError> {
+        let extracted_addons_dir = dir.join("extracted");
+        if let Err(err) = fs::remove_dir_all(&extracted_addons_dir)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            Err(BuildError::CantClearContentCache(err))
+        } else {
+            fs::create_dir_all(&extracted_addons_dir).map_err(BuildError::CantCreateContentCache)?;
+            Ok(extracted_addons_dir)
+        }
+    }
+
+    fn create_new_working_vpk_dir(dir: &Utf8PlatformPath) -> Result<Utf8PlatformPathBuf, BuildError> {
+        let working_vpk_dir = dir.join("vpk");
+        if let Err(err) = fs::remove_dir_all(&working_vpk_dir)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            Err(BuildError::CantClearWorkingVpkDirectory(err))
+        } else {
+            fs::create_dir_all(&working_vpk_dir).map_err(BuildError::CantCreateWorkingVpkDirectory)?;
+            Ok(working_vpk_dir)
+        }
+    }
+
+    fn create_addons_dir(dir: &Utf8PlatformPath) -> Result<Utf8PlatformPathBuf, BuildError> {
+        let addons_dir = dir.join("addons");
+        fs::create_dir_all(&addons_dir).map_err(BuildError::CantCreateAddonsDirectory)?;
+        Ok(addons_dir)
+    }
+
+    fn get_backup_dir() -> Result<Utf8PlatformPathBuf, BuildError> {
+        let backup_dir = Utf8PlatformPathBuf::from_str("./backup")
+            .expect("from_str should always succeed with this path")
+            .absolutize()
+            .map_err(BuildError::IoBackupDirectory)?;
+
+        let metadata = fs::metadata(&backup_dir).map_err(|err| {
+            if err.kind() == io::ErrorKind::NotFound {
+                BuildError::MissingBackupDirectory
+            } else {
+                BuildError::IoBackupDirectory(err)
+            }
+        })?;
+
+        if metadata.is_dir() {
+            Ok(backup_dir)
+        } else {
+            Err(BuildError::MissingBackupDirectory)
+        }
+    }
+
+    fn get_vanilla_pcf_map() -> HashMap<String, Vec<CString>> {
+        DeJson::deserialize_json(PARTICLE_SYSTEM_MAP).expect("the PARTICLE_SYSTEM_MAP should always be valid JSON")
+    }
+
+    fn get_misc_vpk(&self) -> Result<VPK, BuildError> {
+        let vpk_path = self.tf_dir.join(TF2_VPK_NAME);
+        Ok(VPK::read(vpk_path)?)
+    }
+
+    fn get_tf_custom_dir(&self) -> Result<Utf8PlatformPathBuf, BuildError> {
+        let custom_path = self.tf_dir.join("custom");
+
+        match fs::metadata(&custom_path) {
+            Ok(metadata) if metadata.is_dir() => Ok(custom_path),
+            Err(err) if err.kind() != io::ErrorKind::NotFound => Err(BuildError::IoTfCustomDirectory(custom_path, err)),
+            _ => Err(BuildError::MissingTfCustomDirectory(custom_path)),
+        }
+    }
+
+    fn build(self) -> Result<App, BuildError> {
+        _ = Self::create_single_instance()?;
+
+        let project_dirs = Self::create_project_dirs()?;
+        let working_dir = Self::get_working_dir(&project_dirs);
+        let extracted_content_dir = Self::create_new_content_cache_dir(&working_dir)?;
+        let working_vpk_dir = Self::create_new_working_vpk_dir(&working_dir)?;
+        let addons_dir = Self::create_addons_dir(&working_dir)?;
+        let backup_dir = Self::get_backup_dir()?;
+        let tf_misc_vpk = self.get_misc_vpk()?;
+        let tf_custom_dir = self.get_tf_custom_dir()?;
+
+        let vanilla_pcf_to_systems = Self::get_vanilla_pcf_map();
+        let vanilla_system_to_pcf: HashMap<CString, String> = vanilla_pcf_to_systems
+            .iter()
+            .flat_map(|(pcf_path, systems)| systems.iter().map(|system| (system.clone(), pcf_path.clone())))
+            .collect();
+
+        let mut vanilla_pcf_paths = Vec::new();
+        for path in vanilla_pcf_to_systems.keys() {
+            let path = Utf8UnixPathBuf::from_str(path).expect("the PCF map keys must always be valid unix paths");
+            vanilla_pcf_paths.push(path.with_platform_encoding());
+        }
+
+        Ok(App {
+            addons_dir,
+            extracted_content_dir,
+            backup_dir,
+            working_vpk_dir,
+
+            vanilla_pcf_paths,
+            vanilla_pcf_to_systems,
+            vanilla_system_to_pcf,
+
+            tf_misc_vpk,
+            tf_custom_dir,
+        })
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     /*
        TODO: if not already configured, detect/select a tf/ directory
@@ -340,126 +528,27 @@ fn main() -> anyhow::Result<()> {
        TODO: tui for selecting addons to install/uninstall
        TODO: detect conflicts in selected addons
     */
-    const TF2_VPK_NAME: &str = "tf2_misc_dir.vpk";
-
-    // TODO: single_instance's macos implementation might not be desirable since this program is intended to be portable... maybe we just dont support macos (:
-    let instance = SingleInstance::new("net.dresswithpockets.tf2preloader.lock")?;
-    if !instance.is_single() {
-        eprintln!("There is another instance of tf2-preloader running. Only one instance can run at a time.");
-        process::exit(1);
-    }
 
     let tf_dir: Utf8PlatformPathBuf = ["local_test", "tf"].iter().collect();
+    let mut app = AppBuilder::with_tf_dir(tf_dir.clone()).build()?;
 
-    let Some(project_dirs) = ProjectDirs::from("net", "dresswithpockets", "tf2preloader") else {
-        eprintln!(
-            "Couldn't retrieve a home directory to store configurations in. Please ensure tf2-preloader can read and write into a $HOME directory."
-        );
-        process::exit(1);
-    };
+    // let app = App {
+    //     _config_dir: paths::to_typed(config_dir).to_path_buf(),
+    //     _config_file: paths::to_typed(&config_file).to_path_buf(),
+    //     extracted_content_dir: paths::to_typed(&extracted_addons_dir).to_path_buf(),
+    //     particles_working_dir: paths::to_typed(&particles_working_dir).to_path_buf(),
+    //     addons_dir: paths::to_typed(&addons_dir).to_path_buf(),
+    //     backup_dir,
+    //     vanilla_pcf_paths,
+    //     pcf_to_particle_system,
+    //     particle_system_to_pcf,
 
-    let config_dir = project_dirs.config_local_dir();
-    if let Err(err) = fs::create_dir_all(config_dir) {
-        eprintln!("Couldn't create the config directory: {err}");
-        process::exit(1);
-    }
-
-    let config_file = config_dir.join("config.toml");
-    if let Err(err) = File::create_new(&config_file)
-        && err.kind() != io::ErrorKind::AlreadyExists
-    {
-        eprintln!("Couldn't create config.toml: {err}");
-        process::exit(1);
-    }
-
-    let working_dir = project_dirs.data_local_dir().join("working");
-
-    let extracted_addons_dir = working_dir.join("extracted");
-    if let Err(err) = fs::remove_dir_all(&extracted_addons_dir)
-        && err.kind() != io::ErrorKind::NotFound
-    {
-        eprintln!("Couldn't clear the addon content cache: {err}");
-        process::exit(1);
-    }
-
-    if let Err(err) = fs::create_dir_all(&extracted_addons_dir) {
-        eprintln!("Couldn't create the addon content cache: {err}");
-        process::exit(1);
-    }
-
-    let vpk_working_dir = working_dir.join("vpk");
-    if let Err(err) = fs::remove_dir_all(&vpk_working_dir)
-        && err.kind() != io::ErrorKind::NotFound
-    {
-        eprintln!("Couldn't clear the VPK working directory: {err}");
-        process::exit(1);
-    }
-
-    if let Err(err) = fs::create_dir_all(&vpk_working_dir) {
-        eprintln!("Couldn't create the VPK working directory: {err}");
-        process::exit(1);
-    }
-
-    let particles_working_dir = working_dir.join("particles");
-    if let Err(err) = fs::remove_dir_all(&particles_working_dir)
-        && err.kind() != io::ErrorKind::NotFound
-    {
-        eprintln!("Couldn't clear the particles working cache: {err}");
-        process::exit(1);
-    }
-
-    if let Err(err) = fs::create_dir_all(&particles_working_dir) {
-        eprintln!("Couldn't create the particles working cache: {err}");
-        process::exit(1);
-    }
-
-    let addons_dir = working_dir.join("addons");
-    if let Err(err) = fs::create_dir_all(&addons_dir) {
-        eprintln!("Couldn't create the addons directory: {err}");
-        process::exit(1);
-    }
-
-    let backup_dir = PathBuf::from_str("./backup")?;
-    let backup_dir = paths::std_to_typed(&backup_dir)?.to_path_buf();
-
-    let pcf_to_particle_system: HashMap<String, Vec<CString>> = DeJson::deserialize_json(include_str!("particle_system_map.json"))?;
-    let particle_system_to_pcf: HashMap<CString, String> = pcf_to_particle_system
-        .iter()
-        .flat_map(|(pcf_path, systems)| systems.iter().map(|system| (system.clone(), pcf_path.clone())))
-        .collect();
-
-    let mut vanilla_pcf_paths = Vec::new();
-    for path in pcf_to_particle_system.keys() {
-        let path = Utf8PlatformPathBuf::from_str(path)?;
-        vanilla_pcf_paths.push(path);
-    }
-
-    let app = App {
-        _config_dir: paths::to_typed(config_dir).to_path_buf(),
-        _config_file: paths::to_typed(&config_file).to_path_buf(),
-        extracted_addons_dir: paths::to_typed(&extracted_addons_dir).to_path_buf(),
-        particles_working_dir: paths::to_typed(&particles_working_dir).to_path_buf(),
-        addons_dir: paths::to_typed(&addons_dir).to_path_buf(),
-        backup_dir,
-        vanilla_pcf_paths,
-        pcf_to_particle_system,
-        particle_system_to_pcf,
-
-        vpk_working_dir: paths::to_typed(&vpk_working_dir).to_path_buf(),
-        vpk_out_dir: paths::to_typed(&vpk_working_dir).join_checked("custom")?,
-    };
+    //     vpk_working_dir: paths::to_typed(&vpk_working_dir).to_path_buf(),
+    //     vpk_out_dir: paths::to_typed(&vpk_working_dir).join_checked("custom")?,
+    // };
 
     // TODO: detect tf directory
     // TODO: prompt user to verify or provide their own tf directory after discovery attempt
-
-    let vpk_path = tf_dir.join(TF2_VPK_NAME);
-    let mut misc_vpk = match vpk::VPK::read(vpk_path) {
-        Ok(vpk) => vpk,
-        Err(err) => {
-            eprintln!("Couldn't open tf/tf2_misc_dir.vpk: {err}");
-            process::exit(1);
-        }
-    };
 
     let sources = match Sources::read_dir(&app.addons_dir) {
         Ok(sources) => sources,
@@ -481,7 +570,7 @@ fn main() -> anyhow::Result<()> {
     // files without modifying the original addon files.
     let mut extracted_addons = Vec::new();
     for source in sources.sources {
-        let extracted = match source.extract_as_subfolder_in(&app.extracted_addons_dir) {
+        let extracted = match source.extract_as_subfolder_in(&app.extracted_content_dir) {
             Ok(extracted) => extracted,
             Err(err) => {
                 eprintln!("Couldn't extract some mods: {err}");
@@ -582,7 +671,7 @@ fn main() -> anyhow::Result<()> {
     // ensuring that any non-vanilla materials required by our PCFs are copied over to our working directory
     for (material_name, (addon, material)) in materials {
         let from_materials_path = addon.content_path.join_checked("materials")?;
-        let to_materials_path = app.vpk_working_dir.join_checked("materials")?;
+        let to_materials_path = app.working_vpk_dir.join_checked("materials")?;
 
         let from_path = from_materials_path.join_checked(&material.relative_path)?;
         let to_path = to_materials_path.join_checked(material_name)?;
@@ -646,7 +735,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // ensure we start from a consistent state by restoring the particles in the tf misc vpk back to vanilla content.
-    if let Err(err) = misc_vpk.restore_particles(&app.backup_dir) {
+    if let Err(err) = app.tf_misc_vpk.restore_particles(&app.backup_dir) {
         eprintln!("There was an error restoring some or all particles to the vanilla state: {err}");
         process::exit(1);
     }
@@ -660,8 +749,8 @@ fn main() -> anyhow::Result<()> {
 
     // we can finally generate our _dazzle_preloader VPKs from our addon contents.
     vpk_writer::pack_directory(
-        &app.vpk_working_dir,
-        &app.vpk_out_dir,
+        &app.working_vpk_dir,
+        &app.tf_custom_dir,
         "_dazzle_preloader",
         SPLIT_BY_2GB,
     )?;
