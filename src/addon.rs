@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use copy_dir::copy_dir;
 use glob::glob;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::{self, Read},
     path::{Path, PathBuf},
@@ -30,7 +30,7 @@ pub struct Addon {
     /// the path to the source file (vpk) or folder of the addon content
     pub source_path: Utf8PlatformPathBuf,
 
-    /// A set of absolute VTF paths, provided by the addon
+    /// A map of "{addon}/materials"-relative VTF paths to absolute paths, provided by the addon
     pub texture_files: HashMap<String, Utf8PlatformPathBuf>,
 
     /// A map of "{addon}/materials/"-relative VMT paths to decoded VMTs, provided by the addon
@@ -154,6 +154,7 @@ impl Extracted {
             let path = paths::to_typed(&path).absolutize()?;
             let relative_path = path.strip_prefix(&materials_path)?;
             texture_files.insert(relative_path.to_string(), path);
+
         }
 
         Ok(Addon {
