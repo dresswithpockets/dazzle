@@ -1,0 +1,3 @@
+[submodule "nanoserde"]
+	path = nanoserde
+	url = https://github.com/dresswithpockets/nanoserde

@@ -43,6 +43,7 @@ use std::{
 };
 
 use directories::ProjectDirs;
+use nanoserde::{DeJson, SerJson};
 use ordermap::OrderMap;
 use pcf::{ElementsExt, Pcf};
 use single_instance::SingleInstance;
@@ -421,8 +422,7 @@ fn main() -> anyhow::Result<()> {
     let backup_dir = PathBuf::from_str("./backup")?;
     let backup_dir = paths::std_to_typed(&backup_dir)?.to_path_buf();
 
-    let pcf_to_particle_system: HashMap<String, Vec<CString>> =
-        serde_json::from_str(include_str!("particle_system_map.json"))?;
+    let pcf_to_particle_system: HashMap<String, Vec<CString>> = DeJson::deserialize_json(include_str!("particle_system_map.json"))?;
     let particle_system_to_pcf: HashMap<CString, String> = pcf_to_particle_system
         .iter()
         .flat_map(|(pcf_path, systems)| systems.iter().map(|system| (system.clone(), pcf_path.clone())))
@@ -652,7 +652,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // TODO: de-duplicate elements in item_fx.pcf, halloween.pcf, bigboom.pcf, and dirty_explode.pcf.
-    //       NB we dont need to do this if for any PCFs already in our present_pcfs map
+    //       NB we dont need to do this for any PCFs already in our present_pcfs map
     //       NBB we can just do the usual routine of: decode, filter by particle_system_map, and reindex
     //           - once done, we can just add these PCFs to processed_pcfs
 
