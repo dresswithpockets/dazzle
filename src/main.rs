@@ -51,10 +51,7 @@ use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf, Utf8UnixPathBuf};
 use vpk::VPK;
 
 use crate::patch::PatchVpkExt;
-use crate::{
-    addon::{Addon, Sources},
-    patch::PrintVpkExt,
-};
+use crate::addon::{Addon, Sources};
 
 const SPLIT_BY_2GB: u32 = 2 << 30;
 
@@ -750,11 +747,11 @@ fn main() -> anyhow::Result<()> {
 
     // TODO: investigate blood_trail.pcf -> npc_fx.pc "hacky fix for blood_trail being so small"
 
-    // we can finally generate our _dazzle_preloader VPKs from our addon contents.
+    // we can finally generate our _dazzle_addons VPKs from our addon contents.
     vpk_writer::pack_directory(
         &app.working_vpk_dir,
         &app.tf_custom_dir,
-        "_dazzle_preloader",
+        "_dazzle_addons",
         SPLIT_BY_2GB,
     )?;
 

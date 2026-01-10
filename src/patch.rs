@@ -1,10 +1,8 @@
-use anyhow::anyhow;
 use glob::glob;
 use std::{
     fs::{File, OpenOptions},
     io::{self, BufReader, Seek, SeekFrom},
     path::Path,
-    sync::Arc,
 };
 
 use relative_path::RelativePathBuf;
