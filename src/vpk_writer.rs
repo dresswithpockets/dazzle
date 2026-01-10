@@ -271,30 +271,42 @@ fn write_tree(
 }
 
 fn get_vpk_tree(source: &Utf8PlatformPath) -> Result<VpkTree<Entry>, Error> {
-    let mut tree = VpkTree(HashMap::new());
-    let dir = fs::read_dir(source)?;
-    for entry in dir {
-        let entry = entry?;
-        let size = entry.metadata()?.size() as u32;
-        let source_path = paths::to_typed(&entry.path()).absolutize()?;
-        let extension = source_path.extension().unwrap_or(" ").to_string();
-        let filename = source_path.file_stem().unwrap_or(" ").to_string();
+    fn visit(source: &Utf8PlatformPath, dir: &Utf8PlatformPath, tree: &mut VpkTree<Entry>) -> Result<(), Error> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let source_path = paths::to_typed(&entry.path()).absolutize()?;
 
-        let directory = source_path
-            .strip_prefix(source)?
-            .parent()
-            .map_or(" ".to_string(), |el| el.with_unix_encoding().to_string());
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                visit(source, &source_path, tree)?;
+                continue
+            }
 
-        tree.insert(
-            &extension,
-            &directory,
-            Entry {
-                source_path,
-                filename,
-                size,
-            },
-        );
+            let size = metadata.size() as u32;
+            let extension = source_path.extension().unwrap_or(" ").to_string();
+            let filename = source_path.file_stem().unwrap_or(" ").to_string();
+
+            let directory = source_path
+                .strip_prefix(source)?
+                .parent()
+                .map_or(" ".to_string(), |el| el.with_unix_encoding().to_string());
+
+            tree.insert(
+                &extension,
+                &directory,
+                Entry {
+                    source_path,
+                    filename,
+                    size,
+                },
+            );
+        }
+
+        Ok(())
     }
+
+    let mut tree = VpkTree(HashMap::new());
+    visit(source, source, &mut tree)?;
 
     Ok(tree)
 }

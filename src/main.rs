@@ -668,71 +668,100 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    // ensuring that any non-vanilla materials required by our PCFs are copied over to our working directory
-    for (material_name, (addon, material)) in materials {
+    for addon in &addons {
+        copy_addon_structure(&addon.content_path, &app.working_vpk_dir)?;
+
         let from_materials_path = addon.content_path.join_checked("materials")?;
         let to_materials_path = app.working_vpk_dir.join_checked("materials")?;
 
-        let from_path = from_materials_path.join_checked(&material.relative_path)?;
-        let to_path = to_materials_path.join_checked(material_name)?;
-        if let Err(err) = copy(&from_path, &to_path) {
-            eprintln!(
-                "There was an error copying the extracted material '{}' to '{to_path}': {err}",
-                &material.relative_path
-            );
-            process::exit(1);
-        }
+        for (material_name, material) in &addon.relative_material_files {
+            let from_path = from_materials_path.join_checked(&material.relative_path)?;
+            let to_path = to_materials_path.join_checked(material_name)?;
+            fs::create_dir_all(to_path.parent().unwrap())?;
 
-        if let Some(texture_name) = &material.base_texture
-            && let Some(from_path) = addon.texture_files.get(texture_name)
-        {
-            let to_path = to_materials_path.join_checked(texture_name)?;
-            if let Err(err) = copy(from_path, &to_path) {
-                eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
+            if let Err(err) = copy(&from_path, &to_path) {
+                eprintln!(
+                    "There was an error copying the extracted material '{}' to '{to_path}': {err}",
+                    &material.relative_path
+                );
                 process::exit(1);
             }
         }
 
-        if let Some(texture_name) = &material.detail
-            && let Some(from_path) = addon.texture_files.get(texture_name)
-        {
+        for (texture_name, texture_path) in &addon.texture_files {
             let to_path = to_materials_path.join_checked(texture_name)?;
-            if let Err(err) = copy(from_path, &to_path) {
-                eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
-                process::exit(1);
-            }
-        }
-
-        if let Some(texture_name) = &material.ramp_texture
-            && let Some(from_path) = addon.texture_files.get(texture_name)
-        {
-            let to_path = to_materials_path.join_checked(texture_name)?;
-            if let Err(err) = copy(from_path, &to_path) {
-                eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
-                process::exit(1);
-            }
-        }
-
-        if let Some(texture_name) = &material.normal_map
-            && let Some(from_path) = addon.texture_files.get(texture_name)
-        {
-            let to_path = to_materials_path.join_checked(texture_name)?;
-            if let Err(err) = copy(from_path, &to_path) {
-                eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
-                process::exit(1);
-            }
-        }
-
-        if let Some(texture_name) = &material.normal_map_2
-            && let Some(from_path) = addon.texture_files.get(texture_name)
-        {
-            let to_path = to_materials_path.join_checked(texture_name)?;
-            if let Err(err) = copy(from_path, &to_path) {
-                eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
+            if let Err(err) = copy(texture_path, &to_path) {
+                eprintln!("There was an error copying the extracted texture '{texture_path}' to '{to_path}': {err}");
                 process::exit(1);
             }
         }
     }
+
+    // ensuring that any non-vanilla materials required by our PCFs are copied over to our working directory
+    // for (material_name, (addon, material)) in materials {
+    //     let from_materials_path = addon.content_path.join_checked("materials")?;
+    //     let to_materials_path = app.working_vpk_dir.join_checked("materials")?;
+
+    //     let from_path = from_materials_path.join_checked(&material.relative_path)?;
+    //     let to_path = to_materials_path.join_checked(material_name)?;
+    //     if let Err(err) = copy(&from_path, &to_path) {
+    //         eprintln!(
+    //             "There was an error copying the extracted material '{}' to '{to_path}': {err}",
+    //             &material.relative_path
+    //         );
+    //         process::exit(1);
+    //     }
+
+    //     if let Some(texture_name) = &material.base_texture
+    //         && let Some(from_path) = addon.texture_files.get(texture_name)
+    //     {
+    //         let to_path = to_materials_path.join_checked(texture_name)?;
+    //         if let Err(err) = copy(from_path, &to_path) {
+    //             eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
+    //             process::exit(1);
+    //         }
+    //     }
+
+    //     if let Some(texture_name) = &material.detail
+    //         && let Some(from_path) = addon.texture_files.get(texture_name)
+    //     {
+    //         let to_path = to_materials_path.join_checked(texture_name)?;
+    //         if let Err(err) = copy(from_path, &to_path) {
+    //             eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
+    //             process::exit(1);
+    //         }
+    //     }
+
+    //     if let Some(texture_name) = &material.ramp_texture
+    //         && let Some(from_path) = addon.texture_files.get(texture_name)
+    //     {
+    //         let to_path = to_materials_path.join_checked(texture_name)?;
+    //         if let Err(err) = copy(from_path, &to_path) {
+    //             eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
+    //             process::exit(1);
+    //         }
+    //     }
+
+    //     if let Some(texture_name) = &material.normal_map
+    //         && let Some(from_path) = addon.texture_files.get(texture_name)
+    //     {
+    //         let to_path = to_materials_path.join_checked(texture_name)?;
+    //         if let Err(err) = copy(from_path, &to_path) {
+    //             eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
+    //             process::exit(1);
+    //         }
+    //     }
+
+    //     if let Some(texture_name) = &material.normal_map_2
+    //         && let Some(from_path) = addon.texture_files.get(texture_name)
+    //     {
+    //         let to_path = to_materials_path.join_checked(texture_name)?;
+    //         if let Err(err) = copy(from_path, &to_path) {
+    //             eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
+    //             process::exit(1);
+    //         }
+    //     }
+    // }
 
     // ensure we start from a consistent state by restoring the particles in the tf misc vpk back to vanilla content.
     if let Err(err) = app.tf_misc_vpk.restore_particles(&app.backup_dir) {
@@ -788,6 +817,47 @@ fn main() -> anyhow::Result<()> {
     // TODO: figure out how particle_system_map.json is generated. Is it just a map of vanilla PCF paths to named particle system definition elements?
 
     // TODO: process and patch particles into main VPK, handling duplicate effects
+
+    Ok(())
+}
+
+fn copy_addon_structure(in_dir: &Utf8PlatformPath, out_dir: &Utf8PlatformPath) -> anyhow::Result<()> {
+    fn visit(in_dir: &Utf8PlatformPath, out_dir: &Utf8PlatformPath) -> anyhow::Result<()> {
+        // create the directory tree before we copy anything over
+        for entry in fs::read_dir(in_dir)? {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                let path = entry.path();
+                let path = paths::to_typed(&path).absolutize()?;
+                let new_out_dir = out_dir.join(path.strip_prefix(in_dir)?);
+                fs::create_dir(&new_out_dir)?;
+
+                visit(&path, &new_out_dir)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    // create the directory tree before we copy anything over
+    for entry in fs::read_dir(in_dir)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+
+        if entry.file_name().eq_ignore_ascii_case("particles") {
+            continue;
+        }
+
+        if metadata.is_dir() {
+            let path = entry.path();
+            let path = paths::to_typed(&path).absolutize()?;
+            let new_out_dir = out_dir.join(path.strip_prefix(in_dir)?);
+            fs::create_dir(&new_out_dir)?;
+
+            visit(&path, &new_out_dir)?;
+        }
+    }
 
     Ok(())
 }
