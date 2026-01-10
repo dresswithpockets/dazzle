@@ -3,7 +3,7 @@ use glob::glob;
 use std::{
     fs::{File, OpenOptions},
     io::{self, BufReader, Seek, SeekFrom},
-    path::Path,
+    path::Path, sync::Arc,
 };
 
 use relative_path::RelativePathBuf;
@@ -12,8 +12,8 @@ pub use vpk::VPK;
 
 #[derive(Debug, Error)]
 pub enum PatchError {
-    #[error("file not found in vpk")]
-    NotFound,
+    #[error("file '{0}' not found in vpk")]
+    NotFound(String),
 
     #[error("can't patch file that has preload data")]
     HasPreloadData,
@@ -26,6 +26,10 @@ pub enum PatchError {
 
     #[error(transparent)]
     IoError(#[from] io::Error),
+}
+
+pub trait PrintVpkExt {
+    fn print_all_entries(&self);
 }
 
 pub trait PatchVpkExt {
@@ -57,9 +61,44 @@ pub trait PatchVpkExt {
     fn restore_particles(&mut self, backup_dir: impl AsRef<Path>) -> anyhow::Result<()>;
 }
 
+impl PrintVpkExt for vpk::VPK {
+    fn print_all_entries(&self) {
+        println!("root_path: {}", self.root_path.display());
+
+        println!("header_length: {}", self.header_length);
+        println!("version: {}", self.header.version);
+        println!("tree_length: {}", self.header.tree_length);
+        println!("signature: {}", self.header.signature);
+
+        if let Some(header_v2) = &self.header_v2 {
+            println!("chunk_hashes_length: {}", header_v2.chunk_hashes_length);
+            println!("embed_chunk_length: {}", header_v2.embed_chunk_length);
+            println!("self_hashes_length: {}", header_v2.self_hashes_length);
+            println!("signature_length: {}", header_v2.signature_length);
+        }
+
+        println!("{} entries", self.tree.len());
+
+        let mut entries: Vec<_> = self.tree.iter().clone().collect();
+        entries.sort_by(|a, b| a.1.dir_entry.archive_index.cmp(&b.1.dir_entry.archive_index));
+
+        for (key, entry) in entries {
+            if entry.dir_entry.archive_index == 0 {
+                println!("entry in {} at '{key}'", entry.dir_entry.archive_index);
+            }
+            // if let Some(archive_dir) = &entry.archive_path {
+            //     println!("- archive_dir: '{}'", archive_dir.display());
+            // }
+            // println!("- preload data len: {}", entry.preload_data.len());
+        }
+    }
+}
+
 impl PatchVpkExt for vpk::VPK {
     fn patch_file(&mut self, path_in_vpk: &str, path_on_disk: &Path) -> Result<(), PatchError> {
-        let entry = self.tree.get(path_in_vpk).ok_or(PatchError::NotFound)?;
+        let entry = self.tree.get(path_in_vpk).ok_or_else(|| {
+            PatchError::NotFound(path_in_vpk.to_string())
+        })?;
 
         if entry.dir_entry.preload_length > 0 {
             return Err(PatchError::HasPreloadData);
@@ -112,11 +151,7 @@ impl PatchVpkExt for vpk::VPK {
             // given ./particles/example.pcf, we should map to:
 
             //   /particles/example.pcf - the path to the file in the VPK
-            let path_in_vpk = particle_file
-                .to_path("/")
-                .into_os_string()
-                .into_string()
-                .or(Err(anyhow!("failed to convert the PCF path to a unicode string")))?;
+            let path_in_vpk = particle_file.clone().into_string();
 
             //   /path/to/backup/particles/example.pcf - the actual on-disk path of the backup particle file
             let path_on_disk = particle_file.to_path(backup_dir);

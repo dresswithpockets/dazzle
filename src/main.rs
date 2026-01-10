@@ -50,10 +50,10 @@ use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf, Utf8UnixPathBuf};
 use vpk::VPK;
 
-use crate::addon::{Addon, Sources};
+use crate::{addon::{Addon, Sources}, patch::PrintVpkExt};
 use crate::patch::PatchVpkExt;
 
-const SPLIT_BY_2GB: u64 = 2 << 30;
+const SPLIT_BY_2GB: u32 = 2 << 30;
 
 struct App {
     addons_dir: Utf8PlatformPathBuf,
@@ -372,7 +372,7 @@ enum BuildError {
     #[error("couldn't find the backup assets directory, due to an IO error")]
     IoBackupDirectory(io::Error),
 
-    #[error("couldn't find the custom directory in the tf dir specified: '{0}''")]
+    #[error("couldn't find the custom directory in the tf dir specified: '{0}'")]
     MissingTfCustomDirectory(Utf8PlatformPathBuf),
 
     #[error("couldn't find the custom directory in the tf dir specified: '{0}', due to an IO error")]
@@ -490,8 +490,8 @@ impl AppBuilder {
         let working_vpk_dir = Self::create_new_working_vpk_dir(&working_dir)?;
         let addons_dir = Self::create_addons_dir(&working_dir)?;
         let backup_dir = Self::get_backup_dir()?;
-        let tf_misc_vpk = self.get_misc_vpk()?;
         let tf_custom_dir = self.get_tf_custom_dir()?;
+        let tf_misc_vpk = self.get_misc_vpk()?;
 
         let vanilla_pcf_to_systems = Self::get_vanilla_pcf_map();
         let vanilla_system_to_pcf: HashMap<CString, String> = vanilla_pcf_to_systems

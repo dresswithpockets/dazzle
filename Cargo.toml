@@ -15,6 +15,8 @@ split_item_fx_pcf = []
 
 [dependencies]
 anyhow = "1.0"
+byteorder = "1.5"
+buf_read_write = "0.5"
 pcf = { version = "0.1.0", path = "pcf" }
 copy_dir = "0.1"
 vpk = "0.3"
@@ -30,6 +32,8 @@ nanoserde = { path = "nanoserde", default-features = false, features = ["std", "
 ordermap = "1.0"
 keyvalues-parser = "0.2"
 hashbrown = "0.16"
+crc32fast = "1.5"
+md-5 = "0.10"
 
 [build-dependencies]
 copy_to_output = "2.2.0"
