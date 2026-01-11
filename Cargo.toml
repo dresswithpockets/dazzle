@@ -7,7 +7,7 @@ license = "Apache-2.0"
 
 [workspace]
 default-members = [ ".", ]
-members = [ ".", "pcf", "nanoserde" ]
+members = [ ".", "pcf", "nanoserde" , "tools/pcftree"]
 
 [features]
 default = []
@@ -16,6 +16,7 @@ split_item_fx_pcf = []
 [dependencies]
 anyhow = "1.0"
 byteorder = "1.5"
+bytes = "1.11"
 buf_read_write = "0.5"
 pcf = { version = "0.1.0", path = "pcf" }
 copy_dir = "0.1"

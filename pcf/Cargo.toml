@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0"
 byteorder = "1.5"
 bytes = "1.11"
-derive_more = { version = "2.1", features = [ "from", "into" ] }
+derive_more = { version = "2.1", features = [ "from", "into", "display" ] }
 either = "1.15"
 thiserror = "2.0"
 type-state-builder = { version = "0.5" }

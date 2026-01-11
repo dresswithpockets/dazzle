@@ -25,6 +25,7 @@
 
 pub mod attribute;
 pub mod pcf;
+pub mod index;
 
 pub use attribute::{Attribute, NameIndex};
 pub use pcf::{Element, ElementsExt, Pcf, Root, TypeIndex};

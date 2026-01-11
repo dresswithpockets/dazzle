@@ -1,17 +1,16 @@
-use std::{backtrace::Backtrace, ffi::CString, hash::Hash, io, vec};
+use std::{backtrace::Backtrace, ffi::CString, fmt::Display, hash::Hash, io, vec};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use derive_more::{From, Into};
 use ordered_float::OrderedFloat;
 use thiserror::Error;
 
-use crate::pcf::Element;
-
+use crate::{index::ElementIdx, pcf::Element};
 pub type NameIndex = u16;
 
 #[derive(Debug, From, Clone, Hash, PartialEq, Eq)]
 pub enum Attribute {
-    Element(u32),
+    Element(ElementIdx),
     Integer(i32),
     Float(Float),
     Bool(Bool8),
@@ -22,7 +21,7 @@ pub enum Attribute {
     Vector3(Vector3),
     Vector4(Vector4),
     Matrix(Matrix),
-    ElementArray(Box<[u32]>),
+    ElementArray(Box<[ElementIdx]>),
     IntegerArray(Box<[i32]>),
     FloatArray(Box<[Float]>),
     BoolArray(Box<[Bool8]>),
@@ -35,9 +34,27 @@ pub enum Attribute {
     MatrixArray(Box<[Matrix]>),
 }
 
+impl From<f32> for Attribute {
+    fn from(value: f32) -> Self {
+        Self::Float(value.into())
+    }
+}
+
+impl From<bool> for Attribute {
+    fn from(value: bool) -> Self {
+        Self::Bool(value.into())
+    }
+}
+
+// impl From<Box<[u8]>> for Attribute {
+//     fn from(value: Box<[u8]>) -> Self {
+//         Self::Binary(value)
+//     }
+// }
+
 impl Default for Attribute {
     fn default() -> Self {
-        Self::Element(u32::MAX)
+        Self::Element(ElementIdx::INVALID)
     }
 }
 
@@ -86,9 +103,15 @@ impl ReadAttribute for u32 {
     }
 }
 
-impl WriteAttribute for u32 {
+impl ReadAttribute for ElementIdx {
+    fn read_attribute(reader: &mut impl io::BufRead) -> Result<Self, Self::Err> {
+        Ok(ElementIdx::from_unchecked(reader.read_u32::<LittleEndian>()?))
+    }
+}
+
+impl WriteAttribute for ElementIdx {
     fn write_attribute(&self, writer: &mut impl io::Write) -> Result<(), Self::Err> {
-        writer.write_u32::<LittleEndian>(*self)
+        writer.write_u32::<LittleEndian>((*self).into())
     }
 }
 
@@ -327,7 +350,7 @@ impl<'a, W: io::Write> AttributeWriter<'a, W> {
     pub fn write_attributes(
         &mut self,
         particle_system_definitions_name_idx: NameIndex,
-        root_definitions: &[u32],
+        root_definitions: &[ElementIdx],
         elements: &Vec<Element>,
     ) -> Result<(), io::Error> {
         const ELEMENT_ARRAY_TYPE: u8 = 15;
@@ -448,7 +471,7 @@ impl<'a, R: std::io::BufRead> AttributeReader<'a, R> {
         let type_idx = self.reader.read_u8()?;
 
         match type_idx {
-            1 => Ok(self.read::<u32>()?.into()),
+            1 => Ok(self.read::<ElementIdx>()?.into()),
             2 => Ok(self.read::<i32>()?.into()),
             3 => Ok(self.read::<Float>()?.into()),
             4 => Ok(self.read::<Bool8>()?.into()),
@@ -459,7 +482,7 @@ impl<'a, R: std::io::BufRead> AttributeReader<'a, R> {
             10 => Ok(self.read::<Vector3>()?.into()),
             11 => Ok(self.read::<Vector4>()?.into()),
             14 => Ok(self.read::<Matrix>()?.into()),
-            15 => Ok(self.read_array::<u32>()?.into()),
+            15 => Ok(self.read_array::<ElementIdx>()?.into()),
             16 => Ok(self.read_array::<i32>()?.into()),
             17 => Ok(self.read_array::<Float>()?.into()),
             18 => Ok(self.read_array::<Bool8>()?.into()),
@@ -492,15 +515,34 @@ impl From<bool> for Bool8 {
     }
 }
 
-type Float = OrderedFloat<f32>;
+impl Display for Bool8 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 == 0 {
+            f.write_str("false")
+        } else {
+            f.write_str("true")
+        }
+    }
+}
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub type Float = OrderedFloat<f32>;
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, derive_more::Display)]
+#[display("Color({_0}, {_1}, {_2}, {_3})")]
 pub struct Color(pub u8, pub u8, pub u8, pub u8);
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, derive_more::Display)]
+#[display("Vector2({_0:.2}, {_1:.2})")]
 pub struct Vector2(pub Float, pub Float);
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, derive_more::Display)]
+#[display("Vector3({_0:.2}, {_1:.2}, {_2:.2})")]
 pub struct Vector3(pub Float, pub Float, pub Float);
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, derive_more::Display)]
+#[display("Vector4({_0:.2}, {_1:.2}, {_2:.2}, {_3:.2})")]
 pub struct Vector4(pub Float, pub Float, pub Float, pub Float);
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, derive_more::Display)]
+#[display("Matrix(...)")]
 pub struct Matrix(pub Vector4, pub Vector4, pub Vector4, pub Vector4);

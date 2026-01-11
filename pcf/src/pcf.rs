@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     ffi::{CStr, CString},
     fmt::Display,
     marker::PhantomData,
@@ -8,10 +8,10 @@ use std::{
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use itertools::Itertools;
-use ordermap::OrderMap;
+use ordermap::{OrderMap, OrderSet};
 use thiserror::Error;
 
-use crate::attribute::{self, Attribute, AttributeReader, AttributeWriter, NameIndex};
+use crate::{attribute::{self, Attribute, AttributeReader, AttributeWriter, NameIndex}, index::ElementIdx};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Version {
@@ -76,10 +76,10 @@ pub struct Element {
 }
 
 pub trait ElementsExt<'a>: Iterator<Item = &'a Element> + Sized {
-    fn map_particle_system_indices(self, particle_system_type_idx: &NameIndex) -> impl Iterator<Item = u32> {
+    fn map_particle_system_indices(self, particle_system_type_idx: &NameIndex) -> impl Iterator<Item = ElementIdx> {
         self.enumerate().filter_map(|(element_idx, element)| {
             if element.type_idx == *particle_system_type_idx {
-                Some(element_idx as u32)
+                Some(element_idx.into())
             } else {
                 None
             }
@@ -94,7 +94,7 @@ pub struct Root {
     pub type_idx: TypeIndex,
     pub name: CString,
     pub signature: [u8; 16],
-    pub definitions: Box<[u32]>,
+    pub definitions: Box<[ElementIdx]>,
 }
 
 #[derive(Debug, Clone)]
@@ -103,17 +103,19 @@ pub struct Root {
 /// - there is always a root element with an Element Array referencing every partical system
 /// - all elements are either a particle system, or a child element of a particle system's definition tree
 pub struct Pcf {
-    pub version: Version,
-    pub strings: Symbols,
-    pub root: Root,
-    pub elements: Vec<Element>,
-    elements_by_name: HashMap<CString, u32>,
+    version: Version,
+    strings: Symbols,
+    root: Root,
+    elements: Vec<Element>,
+    elements_by_name: HashMap<CString, ElementIdx>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Symbols {
-    particle_system_definitions_name_idx: NameIndex,
-    particle_system_definition_type_idx: NameIndex,
+    pub particle_system_definitions_name_idx: NameIndex,
+    pub particle_system_definition_type_idx: NameIndex,
+    pub particle_child_type_idx: NameIndex,
+    pub particle_operator_type_idx: NameIndex,
     material_name_idx: NameIndex,
     base: OrderMap<CString, ()>,
 }
@@ -123,22 +125,31 @@ impl Symbols {
         self.base.iter()
     }
 
-    fn get_index(&self, idx: usize) -> Option<(&CString, &())> {
+    pub fn get_index(&self, idx: usize) -> Option<(&CString, &())> {
         self.base.get_index(idx)
     }
 
-    fn entry(&mut self, key: CString) -> ordermap::map::Entry<'_, std::ffi::CString, ()> {
+    pub fn entry(&mut self, key: CString) -> ordermap::map::Entry<'_, std::ffi::CString, ()> {
         self.base.entry(key)
     }
 
     #[allow(dead_code)]
-    fn strings(&self) -> ordermap::map::Keys<'_, std::ffi::CString, ()> {
+    pub fn strings(&self) -> ordermap::map::Keys<'_, std::ffi::CString, ()> {
         self.base.keys()
     }
 
     #[inline]
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.base.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    
+    pub fn get_name(&self, name_idx: u16) -> Option<&CString> {
+        self.get_index(name_idx as usize).map(|el| el.0)
     }
 }
 
@@ -171,6 +182,18 @@ impl TryFrom<OrderMap<CString, ()>> for Symbols {
             .ok_or(Error::MissingSystemDefinitionString)?
             .0 as NameIndex;
 
+        let particle_child_type_idx = base
+            .iter()
+            .find_position(|el| el.0 == c"DmeParticleChild")
+            .map(|(idx, _)| idx as NameIndex)
+            .unwrap_or(NameIndex::MAX);
+
+        let particle_operator_type_idx = base
+            .iter()
+            .find_position(|el| el.0 == c"DmeParticleOperator")
+            .map(|(idx, _)| idx as NameIndex)
+            .unwrap_or(NameIndex::MAX);
+
         let material_name_idx = base
             .iter()
             .find_position(|el| el.0 == c"material")
@@ -180,6 +203,8 @@ impl TryFrom<OrderMap<CString, ()>> for Symbols {
         Ok(Self {
             particle_system_definitions_name_idx,
             particle_system_definition_type_idx,
+            particle_child_type_idx,
+            particle_operator_type_idx,
             material_name_idx,
             base,
         })
@@ -205,7 +230,28 @@ pub enum MergeError {
     SelfIsMissingSystemDefinitionString,
 }
 
+
 impl Pcf {
+    pub fn version(&self) -> Version {
+        self.version
+    }
+
+    pub fn strings(&self) -> &Symbols {
+        &self.strings
+    }
+
+    pub fn root(&self) -> &Root {
+        &self.root
+    }
+
+    pub fn elements(&self) -> &Vec<Element> {
+        &self.elements
+    }
+
+    pub fn get(&self, idx: ElementIdx) -> Option<&Element> {
+        self.elements.get(usize::from(idx))
+    }
+
     #[allow(clippy::cast_possible_truncation)]
     pub fn index_of_string(&self, string: &CStr) -> Option<u16> {
         self.strings.iter().position(|el| el.0 == string).map(|el| el as u16)
@@ -217,39 +263,45 @@ impl Pcf {
 
     pub fn get_element(&self, name: &CString) -> Option<&Element> {
         match self.elements_by_name.get(name) {
-            Some(idx) => self.elements.get(*idx as usize),
+            Some(idx) => self.get(*idx),
             None => None,
         }
     }
 
-    pub fn get_element_index(&self, name: &CString) -> Option<u32> {
+    pub fn get_element_index(&self, name: &CString) -> Option<ElementIdx> {
         self.elements_by_name.get(name).cloned()
     }
 
-    pub fn get_dependent_indices(&self, name: &CString) -> Option<HashSet<u32>> {
-        fn visit(visited: &mut HashSet<u32>, elements: &Vec<Element>, idx: u32) {
+    pub fn get_dependencies(&self, element_idx: ElementIdx) -> OrderSet<ElementIdx> {
+        fn visit(pcf: &Pcf, visited: &mut OrderSet<ElementIdx>, element_idx: ElementIdx) {
             // NB insert returns false when insertion fails
-            if !visited.insert(idx) {
+            if !visited.insert(element_idx) {
                 return;
             }
 
-            let Some(element) = elements.get(idx as usize) else {
+            let Some(element) = pcf.get(element_idx) else {
                 return;
             };
 
             // Element and Element Array attributes contain indices for other elements
             for (_, attribute) in &element.attributes {
                 match attribute {
-                    Attribute::Element(value) if *value != u32::MAX => {
-                        visit(visited, elements, *value);
+                    Attribute::Element(value) => {
+                        if *value == ElementIdx::INVALID {
+                            eprintln!("attribute has ElementIdx::INVALID value");
+                            continue
+                        }
+
+                        visit(pcf, visited, *value);
                     }
                     Attribute::ElementArray(values) => {
                         for value in values {
-                            if *value == u32::MAX {
+                            if *value == ElementIdx::INVALID {
+                                eprintln!("attribute has ElementIdx::INVALID value");
                                 continue;
                             }
 
-                            visit(visited, elements, *value);
+                            visit(pcf, visited, *value);
                         }
                     }
                     _ => continue,
@@ -257,12 +309,112 @@ impl Pcf {
             }
         }
 
-        let idx = self.get_element_index(name)?;
+        let mut visited = OrderSet::new();
+        visit(self, &mut visited, element_idx);
+        visited.remove(&element_idx);
 
-        let mut visited = HashSet::new();
-        visit(&mut visited, &self.elements, idx);
+        visited
+    }
 
-        Some(visited)
+    // pub fn get_dependent_indices(&self, name: &CString) -> Option<HashSet<u32>> {
+    //     fn visit(visited: &mut HashSet<u32>, elements: &Vec<Element>, idx: u32) {
+    //         // NB insert returns false when insertion fails
+    //         if !visited.insert(idx) {
+    //             return;
+    //         }
+
+    //         let Some(element) = elements.get(idx as usize) else {
+    //             return;
+    //         };
+
+    //         // Element and Element Array attributes contain indices for other elements
+    //         for (_, attribute) in &element.attributes {
+    //             match attribute {
+    //                 Attribute::Element(value) if *value != u32::MAX => {
+    //                     visit(visited, elements, *value);
+    //                 }
+    //                 Attribute::ElementArray(values) => {
+    //                     for value in values {
+    //                         if *value == u32::MAX {
+    //                             continue;
+    //                         }
+
+    //                         visit(visited, elements, *value);
+    //                     }
+    //                 }
+    //                 _ => continue,
+    //             }
+    //         }
+    //     }
+
+    //     let idx = self.get_element_index(name)?;
+
+    //     let mut visited = HashSet::new();
+    //     visit(&mut visited, &self.elements, idx);
+
+    //     Some(visited)
+    // }
+
+    pub fn strip_default_values(
+        mut self,
+        particle_system_defaults: &HashMap<&'static CStr, Attribute>,
+        operator_defaults: &HashMap<&'static CStr, Attribute>,
+    ) -> Pcf {
+        let particle_system_defaults: HashMap<NameIndex, &Attribute> = particle_system_defaults
+            .iter()
+            .filter_map(|(key, value)| {
+                self.strings.iter()
+                    .position(|s| s.0.as_bytes().eq_ignore_ascii_case(key.to_bytes()))
+                    .map(|idx| (idx as NameIndex, value))
+            })
+            .collect();
+
+        let operator_defaults: HashMap<NameIndex, &Attribute> = operator_defaults
+            .iter()
+            .filter_map(|(key, value)| {
+                self.strings.iter()
+                    .position(|s| s.0.as_bytes().eq_ignore_ascii_case(key.to_bytes()))
+                    .map(|idx| (idx as NameIndex, value))
+            })
+            .collect();
+
+        self.elements = self.elements
+            .into_iter()
+            .map(|element|{
+                let attributes = if element.type_idx == self.strings.particle_system_definition_type_idx {
+                    element.attributes
+                        .into_iter()
+                        .filter(|(name_idx, attribute)| {
+                            if let Some(default) = particle_system_defaults.get(name_idx) && attribute == *default {
+                                false
+                            } else {
+                                true
+                            }
+                        })
+                        .collect()
+                } else if element.type_idx == self.strings.particle_operator_type_idx {
+                    element.attributes
+                        .into_iter()
+                        .filter(|(name_idx, attribute)| {
+                            if let Some(default) = operator_defaults.get(name_idx) && attribute == *default {
+                                false
+                            } else {
+                                true
+                            }
+                        })
+                        .collect()
+                } else {
+                    element.attributes
+                };
+
+                Element {
+                    attributes,
+                    ..element
+                }
+            })
+            .collect();
+
+        self
     }
 
     /// Merges the contents of `self` and `other` together.
@@ -296,32 +448,27 @@ impl Pcf {
             other_to_new_string_idx.insert(other_idx as TypeIndex, mapped_idx as TypeIndex);
         }
 
-        let system_name_idx = strings
-            .iter()
-            .position(|(el, _)| el == c"DmeParticleSystemDefinition")
-            .ok_or(MergeError::SelfIsMissingSystemDefinitionString)? as NameIndex;
-
         // other's elements may have attributes which refer to indices of other's elements. We'll sum those
         // references with this element_offset as we add them to the combined elements list, to make sure the
         // references stay intact.
-        let element_offset = self.elements.len() as u32;
+        let element_offset = self.elements.len();
 
         let mut elements_by_name = self.elements_by_name;
 
-        // we only want to add elements which aren't already present in self. This will break refernces to elements
+        // we only want to add elements which aren't already present in self. This will break references to elements
         // that are filtered out, so later we'll reindex element references as we add them to our combined list
         let mut filtered_other_elements = Vec::new();
-        let mut other_to_new_element_idx = HashMap::new();
+        let mut other_to_new_element_idx: HashMap<ElementIdx, ElementIdx> = HashMap::new();
         for (other_idx, other_element) in other.elements.into_iter().enumerate() {
             if let Some(new_idx) = elements_by_name.get(&other_element.name).copied() {
-                other_to_new_element_idx.insert(other_idx as u32, new_idx);
+                other_to_new_element_idx.insert(other_idx.into(), new_idx);
                 continue;
             }
 
             filtered_other_elements.push(other_element);
         }
 
-        let mut new_system_indices = Vec::new();
+        let mut new_system_indices: Vec<ElementIdx> = Vec::new();
         let mut elements = self.elements;
         elements.reserve_exact(filtered_other_elements.len());
 
@@ -331,20 +478,21 @@ impl Pcf {
                 .get(&other_element.type_idx)
                 .expect("the element's type_idx should always match a value in the Pcf's string list");
 
-            let new_element_idx = elements.len() as u32;
+            // the new element is getting pushed at thie end of this loop, so the current len() will be its index
+            let new_element_idx: ElementIdx = elements.len().into();
             elements_by_name.insert(other_element.name.clone(), new_element_idx);
 
             // when adding a new DmeParticleSystemDefinition element, we need to make sure the root node's
             // particleSystemDefinitions list is updated with the new element references
-            if type_idx == system_name_idx {
+            if type_idx == strings.particle_system_definition_type_idx {
                 new_system_indices.push(new_element_idx)
             }
 
-            // when we merge in another PCF's elements, we are basically just appending all new elements to our elements.
+            // when we merge in another PCF's elements, we're basically just appending all new elements to our elements.
             // the incoming PCF's elements references will be incorrect - because the indices have been offset by the
             // elements already in our list. So, we have to fixup every name index and element reference for each
             // attribute in each incoming element.
-            let attributes: OrderMap<_, _> = other_element
+            let attributes: OrderMap<NameIndex, Attribute> = other_element
                 .attributes
                 .into_iter()
                 .map(|(name_idx, attribute)| {
@@ -378,7 +526,7 @@ impl Pcf {
             elements_by_name: elements
                 .iter()
                 .enumerate()
-                .map(|(idx, el)| (el.name.clone(), idx as u32))
+                .map(|(idx, el)| (el.name.clone(), idx.into()))
                 .collect(),
             elements,
         })
@@ -397,9 +545,9 @@ impl Pcf {
     }
 
     fn reindex_other_attribute(
-        element_offset: u32,
+        element_offset: usize,
         other_to_new_string_idx: &HashMap<u16, u16>,
-        other_to_new_element_idx: &HashMap<u32, u32>,
+        other_to_new_element_idx: &HashMap<ElementIdx, ElementIdx>,
         name_idx: NameIndex,
         attribute: Attribute,
     ) -> (NameIndex, Attribute) {
@@ -409,7 +557,7 @@ impl Pcf {
             .expect("the attribute's name_idx should always match a value in the Pcf's string list");
 
         let attribute = match attribute {
-            Attribute::Element(value) if value != u32::MAX => {
+            Attribute::Element(value) if value != ElementIdx::INVALID => {
                 let new_idx = other_to_new_element_idx
                     .get(&value)
                     .copied()
@@ -419,7 +567,7 @@ impl Pcf {
             }
             Attribute::ElementArray(mut items) => {
                 for item in items.iter_mut() {
-                    if *item == u32::MAX {
+                    if *item == ElementIdx::INVALID {
                         continue;
                     }
 
@@ -468,7 +616,7 @@ pub struct PcfBuilder<A, B, C, D> {
     strings: B,
     root: D,
     elements: Vec<Element>,
-    elements_by_name: HashMap<CString, u32>,
+    elements_by_name: HashMap<CString, ElementIdx>,
 
     _phantom_strings: PhantomData<B>,
     _phantom_elements: PhantomData<C>,
@@ -518,7 +666,7 @@ impl<A, B, D> PcfBuilder<A, B, NoElements, D> {
     pub fn elements(self, elements: Vec<Element>) -> PcfBuilder<A, B, Elements, D> {
         let mut elements_by_name = self.elements_by_name;
         for (idx, element) in elements.iter().enumerate() {
-            elements_by_name.insert(element.name.clone(), idx as u32);
+            elements_by_name.insert(element.name.clone(), idx.into());
         }
 
         PcfBuilder {
@@ -534,7 +682,7 @@ impl<A, B, D> PcfBuilder<A, B, NoElements, D> {
 
     pub fn element(self, element: Element) -> PcfBuilder<A, B, Elements, D> {
         let mut elements_by_name = self.elements_by_name;
-        elements_by_name.insert(element.name.clone(), 0);
+        elements_by_name.insert(element.name.clone(), 0usize.into());
 
         PcfBuilder {
             version: self.version,
@@ -552,11 +700,12 @@ impl<A, B, D> PcfBuilder<A, B, Elements, D> {
     pub fn element(self, element: Element) -> PcfBuilder<A, B, Elements, D> {
         let element_name = element.name.clone();
 
+        let element_idx: ElementIdx = self.elements.len().into();
         let mut elements = self.elements;
         elements.push(element);
 
         let mut elements_by_name = self.elements_by_name;
-        elements_by_name.insert(element_name, (elements.len() - 1) as u32);
+        elements_by_name.insert(element_name, element_idx);
 
         PcfBuilder {
             version: self.version,
@@ -607,6 +756,12 @@ pub enum Error {
     #[error("The DMX string list does not contain 'DmeParticleSystemDefinition', so it cant be a valid PCF")]
     MissingSystemDefinitionString,
 
+    #[error("The DMX string list does not contain 'DmeParticleChild', so it cant be a valid PCF")]
+    MissingParticleChildString,
+
+    #[error("The DMX string list does not contain 'DmeParticleOperator', so it cant be a valid PCF")]
+    MissingParticleOperatorString,
+
     #[error("The DMX string list does not contain 'material', so it cant be a valid PCF")]
     MissingMaterialString,
 
@@ -626,7 +781,7 @@ impl Pcf {
 
         let mut elements_by_name = HashMap::new();
         for (idx, element) in elements.iter().enumerate() {
-            elements_by_name.insert(element.name.clone(), idx as u32);
+            elements_by_name.insert(element.name.clone(), ElementIdx::from(idx));
         }
 
         Ok(Self {
@@ -734,6 +889,15 @@ impl Pcf {
 
         Ok(())
     }
+
+    // pub fn encode(&self, file: &mut impl std::io::Write, skip_default_attribute_values: bool) -> anyhow::Result<()> {
+    //     self.write_magic_version(file)?;
+    //     self.write_strings(file)?;
+    //     self.write_elements(file)?;
+    //     self.write_element_attributes(file)?;
+
+    //     Ok(())
+    // }
 
     pub(crate) fn write_magic_version(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
         let version = self.version.as_cstr_with_nul_terminator().to_bytes_with_nul();

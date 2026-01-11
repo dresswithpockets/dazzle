@@ -1,8 +1,7 @@
+use byteorder::WriteBytesExt;
 use glob::glob;
 use std::{
-    fs::{File, OpenOptions},
-    io::{self, BufReader, Seek, SeekFrom},
-    path::Path,
+    fs::{self, File, OpenOptions}, io::{self, Read, Seek, SeekFrom}, path::Path
 };
 
 use relative_path::RelativePathBuf;
@@ -17,8 +16,8 @@ pub enum PatchError {
     #[error("can't patch file that has preload data")]
     HasPreloadData,
 
-    #[error("the input file's size ({0} bytes) does not match the file in the vpk archive ({1} bytes)")]
-    MismatchedSizes(u64, u64),
+    #[error("the input file size ({0} bytes) is larger than the file in the vpk archive ('{1}': {2} bytes)")]
+    InputTooBig(u64, String, u64),
 
     #[error("only wrote {0} of the expected {1} bytes")]
     PartialWrite(u64, u64),
@@ -46,7 +45,7 @@ pub trait PatchVpkExt {
     /// - the function produced no IO error but wasn't able to write the entire file
     /// - there was an IO error when reading the file on disk
     /// - there was an IO error when writing the file on disk
-    fn patch_file(&mut self, path_in_vpk: &str, path_on_disk: &Path) -> Result<(), PatchError>;
+    fn patch_file(&mut self, path_in_vpk: &str, size: u64, reader: &mut impl Read) -> Result<(), PatchError>;
 
     /// Searches `backup_dir` PCF files recusively under the `particles` subfolder, and patches them into `self` over
     /// files in the VPK with the same paths relative to `backup_dir`.
@@ -94,7 +93,7 @@ impl PrintVpkExt for vpk::VPK {
 }
 
 impl PatchVpkExt for vpk::VPK {
-    fn patch_file(&mut self, path_in_vpk: &str, path_on_disk: &Path) -> Result<(), PatchError> {
+    fn patch_file(&mut self, path_in_vpk: &str, size: u64, reader: &mut impl Read) -> Result<(), PatchError> {
         let entry = self
             .tree
             .get(path_in_vpk)
@@ -110,23 +109,24 @@ impl PatchVpkExt for vpk::VPK {
 
         // TODO: what about preload_length? does patch_file need to ever handle preloaded files?
         let entry_size = u64::from(entry.dir_entry.file_length);
-        let new_file_size = path_on_disk.symlink_metadata()?.len();
 
-        if entry_size != new_file_size {
-            return Err(PatchError::MismatchedSizes(new_file_size, entry_size));
+        if size > entry_size {
+            return Err(PatchError::InputTooBig(size, path_in_vpk.to_string(), entry_size));
         }
-
-        let new_file = File::open(path_on_disk)?;
-        let mut new_file = BufReader::new(new_file);
 
         let mut archive_file = OpenOptions::new().write(true).open(archive_path.as_ref())?;
         archive_file.seek(SeekFrom::Start(u64::from(entry.dir_entry.archive_offset)))?;
 
-        // TODO!: this is probably _inserting_ new data, not _replacing_ existing data
-
-        let copied = io::copy(&mut new_file, &mut archive_file)?;
-        if copied != entry_size {
+        let copied = io::copy(reader, &mut archive_file)?;
+        if copied != size {
             return Err(PatchError::PartialWrite(copied, entry_size));
+        }
+
+        // patched content needs to have the same size as the original, so we pad in 0s to make it fit snuggly.
+        if entry_size < copied {
+            for _ in entry_size..copied {
+                archive_file.write_u8(0)?;
+            }
         }
 
         Ok(())
@@ -156,7 +156,10 @@ impl PatchVpkExt for vpk::VPK {
             //   /path/to/backup/particles/example.pcf - the actual on-disk path of the backup particle file
             let path_on_disk = particle_file.to_path(backup_dir);
 
-            if let Err(err) = self.patch_file(&path_in_vpk, &path_on_disk) {
+            let size = fs::metadata(&path_on_disk)?.len();
+            let mut reader = File::open(&path_on_disk)?;
+
+            if let Err(err) = self.patch_file(&path_in_vpk, size, &mut reader) {
                 eprintln!("Error patching particle file '{particle_file}': {err}");
             }
         }
