@@ -154,7 +154,6 @@ impl Extracted {
             let path = paths::to_typed(&path).absolutize()?;
             let relative_path = path.strip_prefix(&materials_path)?;
             texture_files.insert(relative_path.to_string(), path);
-
         }
 
         Ok(Addon {

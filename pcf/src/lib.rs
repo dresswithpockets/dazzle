@@ -4,17 +4,19 @@
 //!
 //! Decode & modify a pcf file using a buffered reader:
 //! ```
-//!     let mut file = File::open_buffered("particles.pcf")?;
-//!     let mut pcf = pcf::decode(&mut reader)?;
-//!     println!("particles.pcf has {} particle systems.", pcf.elements.len());
+//!     use std::fs::{File, OpenOptions};
+//!     use std::io::{BufReader};
+//! 
+//!     let mut file = File::open("particles.pcf").unwrap();
+//!     let mut file = BufReader::new(file);
+//!     let mut pcf = pcf::decode(&mut file).unwrap();
+//!     println!("particles.pcf has {} particle systems.", pcf.elements().len());
 //!     // modify pcf elements or attributes...
 //!     // ...
-//! ```
 //!
-//! Encode a pcf back into a file
-//! ```
-//!     let mut file = OpenOptions::new().create(true).write(true).open("new_particles.pcf")?;
-//!     pcf.encode(&mut file)?;
+//!     // Encode a pcf back into a file
+//!     let mut file = OpenOptions::new().create(true).write(true).open("new_particles.pcf").unwrap();
+//!     pcf.encode(&mut file).unwrap();
 //! ```
 
 #![feature(buf_read_has_data_left)]

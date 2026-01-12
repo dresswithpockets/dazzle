@@ -5,7 +5,7 @@ use derive_more::{From, Into};
 use ordered_float::OrderedFloat;
 use thiserror::Error;
 
-use crate::{index::ElementIdx, pcf::Element};
+use crate::{Root, index::ElementIdx, pcf::Element};
 pub type NameIndex = u16;
 
 #[derive(Debug, From, Clone, Hash, PartialEq, Eq)]
@@ -350,17 +350,24 @@ impl<'a, W: io::Write> AttributeWriter<'a, W> {
     pub fn write_attributes(
         &mut self,
         particle_system_definitions_name_idx: NameIndex,
-        root_definitions: &[ElementIdx],
+        root: &Root,
         elements: &Vec<Element>,
     ) -> Result<(), io::Error> {
         const ELEMENT_ARRAY_TYPE: u8 = 15;
 
-        // the root element always has only 1 attribute, and the element array type is always 15.
-        self.writer.write_u32::<LittleEndian>(1)?;
+        // the root element always has at least 1 attribute, and the element array type is always 15.
+
+        self.writer.write_u32::<LittleEndian>(1 + root.attributes.len() as u32)?;
         self.writer
             .write_u16::<LittleEndian>(particle_system_definitions_name_idx)?;
         self.writer.write_u8(ELEMENT_ARRAY_TYPE)?;
-        self.write_array(root_definitions)?;
+        self.write_array(&root.definitions)?;
+
+        for (name_idx, attribute) in &root.attributes {
+            self.writer.write_u16::<LittleEndian>(*name_idx)?;
+            self.writer.write_u8(attribute.as_type())?;
+            self.write_attribute(attribute)?;
+        }
 
         for element in elements {
             self.writer.write_u32::<LittleEndian>(element.attributes.len() as u32)?;

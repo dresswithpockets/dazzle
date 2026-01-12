@@ -95,6 +95,7 @@ pub struct Root {
     pub name: CString,
     pub signature: [u8; 16],
     pub definitions: Box<[ElementIdx]>,
+    pub attributes: OrderMap<NameIndex, Attribute>,
 }
 
 #[derive(Debug, Clone)]
@@ -849,23 +850,39 @@ impl Pcf {
         let attributes: Result<Vec<_>, _> = AttributeReader::try_from(file, element_count + 1)?
             .into_iter()
             .collect();
-        let mut attributes = attributes?;
+        let mut all_attributes = attributes?;
 
-        let (0, name_idx, Attribute::ElementArray(root_definitions)) = attributes.remove(0) else {
-            return Err(Error::MissingRootDefinitions);
+        // TODO: some PCFs have roots that contain more attributes.
+        
+        if let Some(first_non_root_idx) = all_attributes.iter().position(|el| el.0 == 1) {
+            let attributes = all_attributes.split_off(first_non_root_idx).into_iter().chunk_by(|el| el.0);
+            for (element_idx, group) in attributes.into_iter() {
+                // the element_idx returned by the attribute reader includes root at 0, but we took root out of the list
+                // so we need to subtract 1 from the idx
+                let element = elements.get_mut(element_idx - 1).expect("this should never happen");
+                element.attributes = group.map(|el| (el.1, el.2)).collect();
+            }
+        }
+
+        // the remaining attributes will all be root attributes
+        let (root_definitions, root_attributes) = {
+            let mut root_definitions: Option<Box<[ElementIdx]>> = None;
+            let mut remaining_attributes = OrderMap::new();
+            for (_, name_idx, attribute) in all_attributes {
+                if name_idx == definitions_name_idx && let Attribute::ElementArray(root_defs) = attribute {
+                    root_definitions = Some(root_defs);
+                    continue;
+                }
+
+                remaining_attributes.insert(name_idx, attribute);
+            }
+
+            let Some(root_definitions) = root_definitions else {
+                return Err(Error::MissingRootDefinitions);
+            };
+
+            (root_definitions, remaining_attributes)
         };
-
-        if name_idx != definitions_name_idx {
-            return Err(Error::MissingRootDefinitions);
-        }
-
-        let attributes = attributes.into_iter().chunk_by(|el| el.0);
-        for (element_idx, group) in attributes.into_iter() {
-            // the element_idx returned by the attribute reader includes root at 0, but we took root out of the list
-            // so we need to subtract 1 from the idx
-            let element = elements.get_mut(element_idx - 1).expect("this should never happen");
-            element.attributes = group.map(|el| (el.1, el.2)).collect();
-        }
 
         Ok((
             Root {
@@ -873,6 +890,7 @@ impl Pcf {
                 name: root_name,
                 signature: root_signature,
                 definitions: root_definitions,
+                attributes: root_attributes,
             },
             elements,
         ))
@@ -936,7 +954,7 @@ impl Pcf {
     pub(crate) fn write_element_attributes(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
         AttributeWriter::from(file).write_attributes(
             self.strings.particle_system_definitions_name_idx,
-            &self.root.definitions,
+            &self.root,
             &self.elements,
         )?;
 

@@ -124,6 +124,7 @@ impl App {
                     name: pcf.root().name.clone(),
                     signature: pcf.root().signature,
                     definitions: particle_system_indices.into_boxed_slice(),
+                    attributes: pcf.root().attributes.clone(), // TODO: do we need to reindex these?
                 };
 
                 // this new in-memory PCF has only the elements listed in elements_to_extract, with element references

@@ -1,4 +1,4 @@
-use std::{ops::Add, u32};
+use std::{ops::{Add, AddAssign}, u32};
 
 use derive_more::Into;
 use thiserror::Error;
@@ -16,6 +16,10 @@ impl ElementIdx {
 
     pub fn is_valid(&self) -> bool {
         self.0 != u32::MAX
+    }
+
+    pub fn inner(&self) -> u32 {
+        self.0
     }
 }
 
@@ -66,5 +70,11 @@ impl Add<usize> for ElementIdx {
 
     fn add(self, rhs: usize) -> Self::Output {
         ElementIdx(self.0 + rhs as u32)
+    }
+}
+
+impl AddAssign<usize> for ElementIdx {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs as u32
     }
 }
