@@ -1,11 +1,11 @@
 #![feature(file_buffered)]
 #![feature(cstr_display)]
 
-use std::{borrow::Cow, env, fmt::Display, fs::File, process};
+use std::{env, fmt::Display, fs::File, process};
 
-use display_tree::{DisplayTree, print_tree};
-use pcf::{Attribute, Element, NameIndex, Pcf, Root, pcf::{Symbols, Version}};
-use ptree::{TreeBuilder, TreeItem, print_tree};
+use display_tree::DisplayTree;
+use pcf::{Attribute, Element, NameIndex, Pcf};
+use ptree::{TreeBuilder, print_tree};
 
 // #[derive(Debug, Clone)]
 // enum Node {
@@ -26,11 +26,11 @@ use ptree::{TreeBuilder, TreeItem, print_tree};
 
 // impl TreeItem for Node {
 //     type Child = Self;
-    
+
 //     fn write_self<W: std::io::Write>(&self, f: &mut W, style: &ptree::Style) -> std::io::Result<()> {
 //         todo!()
 //     }
-    
+
 //     fn children(&self) -> std::borrow::Cow<[Self::Child]> {
 //         let children: Vec<Node> = match self {
 //             Node::Pcf { path, version, symbols, root } => vec![version, symbols, root],
@@ -42,7 +42,7 @@ use ptree::{TreeBuilder, TreeItem, print_tree};
 
 //         Cow::from(children)
 //     }
-    
+
 // }
 
 #[derive(Debug, DisplayTree)]
@@ -87,14 +87,15 @@ fn main() {
         let root_text = format!(
             "{} ({}, {:x?})",
             pcf.root().name.display(),
-            pcf.strings().get_index(pcf.root().type_idx as usize).unwrap().0.display(),
+            pcf.strings()
+                .get_index(pcf.root().type_idx as usize)
+                .unwrap()
+                .0
+                .display(),
             pcf.root().signature
         );
 
-        let mut root_systems: Vec<_> = pcf.root().definitions
-            .iter()
-            .filter_map(|idx| pcf.get(*idx))
-            .collect();
+        let mut root_systems: Vec<_> = pcf.root().definitions.iter().filter_map(|idx| pcf.get(*idx)).collect();
 
         root_systems.sort_by_key(|el| el.name.as_bytes());
 
@@ -111,7 +112,7 @@ fn main() {
 
     // println!("{path}");
     // println!("│  Version: {}", pcf.version);
-    
+
     // {
     //     let mut strings: Vec<_> = pcf.strings.iter().collect();
     //     strings.sort_by_key(|el| el.0);
@@ -168,7 +169,11 @@ fn main() {
     // }
 }
 
-fn create_element_children<'a, 't>(pcf: &'a Pcf, node: &'t mut TreeBuilder, elements: impl Iterator<Item = &'a Element>) -> &'t mut TreeBuilder {
+fn create_element_children<'a, 't>(
+    pcf: &'a Pcf,
+    node: &'t mut TreeBuilder,
+    elements: impl Iterator<Item = &'a Element>,
+) -> &'t mut TreeBuilder {
     for element in elements {
         let label = format!(
             "{} ({}, {:x?})",
@@ -210,7 +215,7 @@ fn create_attribute_child(pcf: &Pcf, node: &mut TreeBuilder, name_idx: NameIndex
             let child = node.begin_child(name);
             create_element_children(pcf, child, elements.into_iter());
             child.end_child()
-        },
+        }
         Attribute::Integer(value) => node.add_empty_child(format!("{name}: {value}")),
         Attribute::Float(value) => node.add_empty_child(format!("{name}: {value}")),
         Attribute::Bool(value) => node.add_empty_child(format!("{name}: {value}")),
@@ -227,7 +232,7 @@ fn create_attribute_child(pcf: &Pcf, node: &mut TreeBuilder, name_idx: NameIndex
             let child = node.begin_child(name);
             create_element_children(pcf, child, elements.into_iter());
             child.end_child()
-        },
+        }
         Attribute::IntegerArray(items) => add_array(name, node, items),
         Attribute::FloatArray(items) => add_array(name, node, items),
         Attribute::BoolArray(items) => add_array(name, node, items),
@@ -237,14 +242,14 @@ fn create_attribute_child(pcf: &Pcf, node: &mut TreeBuilder, name_idx: NameIndex
                 child.add_empty_child(item.to_string_lossy().into_owned());
             }
             child.end_child()
-        },
+        }
         Attribute::BinaryArray(items) => {
             let child = node.begin_child(name);
             for item in items {
                 child.add_empty_child(format!("{item:#?}"));
             }
             child.end_child()
-        },
+        }
         Attribute::ColorArray(items) => add_array(name, node, items),
         Attribute::Vector2Array(items) => add_array(name, node, items),
         Attribute::Vector3Array(items) => add_array(name, node, items),
@@ -256,7 +261,7 @@ fn create_attribute_child(pcf: &Pcf, node: &mut TreeBuilder, name_idx: NameIndex
 // fn print_branch(prefix: u64, terminal: bool) {
 //     print!("      ");
 //     for _ in 0..depth {
-        
+
 //     }
 
 //     if terminal {
