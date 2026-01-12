@@ -997,7 +997,9 @@ fn copy_addon_structure(in_dir: &Utf8PlatformPath, out_dir: &Utf8PlatformPath) -
             let path = entry.path();
             let path = paths::to_typed(&path).absolutize()?;
             let new_out_dir = out_dir.join(path.strip_prefix(in_dir)?);
-            fs::create_dir(&new_out_dir)?;
+            if let Err(err) = fs::create_dir(&new_out_dir) && err.kind() != io::ErrorKind::AlreadyExists {
+                return Err(err.into());
+            }
 
             visit(&path, &new_out_dir)?;
         }
