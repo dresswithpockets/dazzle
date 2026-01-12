@@ -68,12 +68,12 @@ fn main() {
     let pcf = Pcf::decode(&mut file).unwrap();
 
     let mut tree = TreeBuilder::new(path.clone());
-    tree.add_empty_child(format!("Version: {}", pcf.version));
+    tree.add_empty_child(format!("Version: {}", pcf.version()));
 
     {
         let symbols = tree.begin_child("Symbols".to_string());
 
-        let mut strings: Vec<_> = pcf.strings.iter().collect();
+        let mut strings: Vec<_> = pcf.strings().iter().collect();
         strings.sort_by_key(|el| el.0);
 
         for (string, _) in strings {
@@ -86,14 +86,14 @@ fn main() {
     {
         let root_text = format!(
             "{} ({}, {:x?})",
-            pcf.root.name.display(),
-            pcf.strings.get_index(pcf.root.type_idx as usize).unwrap().0.display(),
-            pcf.root.signature
+            pcf.root().name.display(),
+            pcf.strings().get_index(pcf.root().type_idx as usize).unwrap().0.display(),
+            pcf.root().signature
         );
 
-        let mut root_systems: Vec<_> = pcf.root.definitions
+        let mut root_systems: Vec<_> = pcf.root().definitions
             .iter()
-            .filter_map(|idx| pcf.elements.get(*idx as usize - 1))
+            .filter_map(|idx| pcf.get(*idx))
             .collect();
 
         root_systems.sort_by_key(|el| el.name.as_bytes());
@@ -173,7 +173,7 @@ fn create_element_children<'a, 't>(pcf: &'a Pcf, node: &'t mut TreeBuilder, elem
         let label = format!(
             "{} ({}, {:x?})",
             element.name.display(),
-            pcf.strings.get_index(element.type_idx as usize).unwrap().0.display(),
+            pcf.strings().get_index(element.type_idx as usize).unwrap().0.display(),
             element.signature
         );
 
@@ -181,7 +181,7 @@ fn create_element_children<'a, 't>(pcf: &'a Pcf, node: &'t mut TreeBuilder, elem
             node.add_empty_child(label);
         } else {
             let mut sorted_attributes: Vec<_> = element.attributes.iter().collect();
-            sorted_attributes.sort_by_key(|(name_idx, _)| pcf.strings.get_index(**name_idx as usize).unwrap());
+            sorted_attributes.sort_by_key(|(name_idx, _)| pcf.strings().get_index(**name_idx as usize).unwrap());
 
             let element_child = node.begin_child(label);
             for (name_idx, attribute) in sorted_attributes {
@@ -203,10 +203,10 @@ fn create_attribute_child(pcf: &Pcf, node: &mut TreeBuilder, name_idx: NameIndex
         child.end_child()
     }
 
-    let name = pcf.strings.get_name(name_idx).unwrap().to_string_lossy().into_owned();
+    let name = pcf.strings().get_name(name_idx).unwrap().to_string_lossy().into_owned();
     match attribute {
         Attribute::Element(element) => {
-            let elements: [&Element; 1] = [pcf.elements.get(*element as usize - 1).unwrap()];
+            let elements: [&Element; 1] = [pcf.get(*element).unwrap()];
             let child = node.begin_child(name);
             create_element_children(pcf, child, elements.into_iter());
             child.end_child()
@@ -222,7 +222,7 @@ fn create_attribute_child(pcf: &Pcf, node: &mut TreeBuilder, name_idx: NameIndex
         Attribute::Vector4(value) => node.add_empty_child(format!("{name}: {value}")),
         Attribute::Matrix(value) => node.add_empty_child(format!("{name}: {value}")),
         Attribute::ElementArray(items) => {
-            let mut elements: Vec<_> = items.iter().map(|idx| pcf.elements.get(*idx as usize - 1).unwrap()).collect();
+            let mut elements: Vec<_> = items.iter().map(|idx| pcf.get(*idx).unwrap()).collect();
             elements.sort_by_key(|el| el.name.as_bytes());
             let child = node.begin_child(name);
             create_element_children(pcf, child, elements.into_iter());
