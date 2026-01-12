@@ -3,59 +3,8 @@
 
 use std::{env, fmt::Display, fs::File, process};
 
-use display_tree::DisplayTree;
 use pcf::{Attribute, Element, NameIndex, Pcf};
 use ptree::{TreeBuilder, print_tree};
-
-// #[derive(Debug, Clone)]
-// enum Node {
-//     Pcf{
-//         path: String,
-//         version: Box<Node>,
-//         symbols: Box<Node>,
-//         root: Box<Node>,
-//     },
-//     Version(Version),
-//     Symbols(Box<[Node]>),
-//     Symbol(String),
-//     Root {
-//         root: Root,
-
-//     }
-// }
-
-// impl TreeItem for Node {
-//     type Child = Self;
-
-//     fn write_self<W: std::io::Write>(&self, f: &mut W, style: &ptree::Style) -> std::io::Result<()> {
-//         todo!()
-//     }
-
-//     fn children(&self) -> std::borrow::Cow<[Self::Child]> {
-//         let children: Vec<Node> = match self {
-//             Node::Pcf { path, version, symbols, root } => vec![version, symbols, root],
-//             Node::Version(version) => vec![],
-//             Node::Symbol(_) => vec![],
-//             Node::Symbols(nodes) => vec![],
-//             Node::Root { root } => vec![],
-//         };
-
-//         Cow::from(children)
-//     }
-
-// }
-
-#[derive(Debug, DisplayTree)]
-struct TreeSymbol {
-    #[node_label]
-    value: String,
-}
-
-#[derive(Debug, DisplayTree)]
-struct TreeRoot {
-    #[node_label]
-    label: String,
-}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
