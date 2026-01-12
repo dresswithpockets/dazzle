@@ -753,52 +753,22 @@ fn main() -> anyhow::Result<()> {
             let new_pcf = App::process_mapped_particles(target_pcf, pcf_files)?;
             let stripped_pcf = new_pcf.strip_default_values(&particle_system_defaults, &operator_defaults);
 
+            let target_pcf_path = if target_pcf_path.eq_ignore_ascii_case("particles/blood_trail.pcf") {
+                "particles/npc_fx.pcf".to_string()
+            } else {
+                target_pcf_path
+            };
+
+            // HACK: blood_trail.pcf is really small; even a minor change to it can cause it to be too big for VPK patching.
+            // TF2 doesn't really care in which PCF the particle system is defined. So, we can just rename blood_trail.pcf to
+            // npc_fx.pcf.
             processed_pcfs
                 .entry(target_pcf_path)
-                .or_insert(ProcessedPcf { addon, pcf: stripped_pcf });
+                .or_insert(stripped_pcf);
         }
     }
 
     // TODO: if feature = "split_item_fx_pcf" then we need to merge split-up particles - this may not even be necessary if we scrap item_fx splitting completely
-
-    // Addon particles might refer to a custom or modified material provided by the addon; we also need to make sure
-    // that materials & textures are copied over.
-    let mut materials = HashMap::new();
-    for (new_path, processed_pcf) in &processed_pcfs {
-        // TODO: what if two addons provide materials with the same name?
-        //       does the particle system's material need to exist in vanilla?
-        //       if the neither material or texture need to be present in the base game: we can give each vmt and vtf
-        //       a unique name - like a hash - then change the name of the material in the PCF to point to the new vmt.
-        //
-        //       for now, we just pick the first material.
-
-        let particle_systems = processed_pcf.pcf.get_particle_system_definitions();
-        for element in particle_systems {
-            let Some(material_name) = processed_pcf.pcf.get_material(element) else {
-                eprintln!(
-                    "The PCF '{new_path}' contains a particle system '{}' with no material definition. Skipping",
-                    element.name.display()
-                );
-                continue;
-            };
-
-            // we don't need to copy over vgui/white - its a special case in Source
-            if material_name == c"vgui/white" {
-                continue;
-            }
-
-            let material_name = material_name.to_string_lossy().clone().into_owned();
-
-            // we only care about this material if the addon actually provides it.
-            let Some(parsed_material) = processed_pcf.addon.relative_material_files.get(&material_name) else {
-                continue;
-            };
-
-            materials
-                .entry(material_name)
-                .or_insert((processed_pcf.addon, parsed_material));
-        }
-    }
 
     for addon in &addons {
         copy_addon_structure(&addon.content_path, &app.working_vpk_dir)?;
@@ -829,72 +799,6 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    // ensuring that any non-vanilla materials required by our PCFs are copied over to our working directory
-    // for (material_name, (addon, material)) in materials {
-    //     let from_materials_path = addon.content_path.join_checked("materials")?;
-    //     let to_materials_path = app.working_vpk_dir.join_checked("materials")?;
-
-    //     let from_path = from_materials_path.join_checked(&material.relative_path)?;
-    //     let to_path = to_materials_path.join_checked(material_name)?;
-    //     if let Err(err) = copy(&from_path, &to_path) {
-    //         eprintln!(
-    //             "There was an error copying the extracted material '{}' to '{to_path}': {err}",
-    //             &material.relative_path
-    //         );
-    //         process::exit(1);
-    //     }
-
-    //     if let Some(texture_name) = &material.base_texture
-    //         && let Some(from_path) = addon.texture_files.get(texture_name)
-    //     {
-    //         let to_path = to_materials_path.join_checked(texture_name)?;
-    //         if let Err(err) = copy(from_path, &to_path) {
-    //             eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
-    //             process::exit(1);
-    //         }
-    //     }
-
-    //     if let Some(texture_name) = &material.detail
-    //         && let Some(from_path) = addon.texture_files.get(texture_name)
-    //     {
-    //         let to_path = to_materials_path.join_checked(texture_name)?;
-    //         if let Err(err) = copy(from_path, &to_path) {
-    //             eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
-    //             process::exit(1);
-    //         }
-    //     }
-
-    //     if let Some(texture_name) = &material.ramp_texture
-    //         && let Some(from_path) = addon.texture_files.get(texture_name)
-    //     
-    //         let to_path = to_materials_path.join_checked(texture_name)?;
-    //         if let Err(err) = copy(from_path, &to_path) {
-    //             eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
-    //             process::exit(1);
-    //         }
-    //     }
-
-    //     if let Some(texture_name) = &material.normal_map
-    //         && let Some(from_path) = addon.texture_files.get(texture_name)
-    //     {
-    //         let to_path = to_materials_path.join_checked(texture_name)?;
-    //         if let Err(err) = copy(from_path, &to_path) {
-    //             eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
-    //             process::exit(1);
-    //         }
-    //     }
-
-    //     if let Some(texture_name) = &material.normal_map_2
-    //         && let Some(from_path) = addon.texture_files.get(texture_name)
-    //     {
-    //         let to_path = to_materials_path.join_checked(texture_name)?;
-    //         if let Err(err) = copy(from_path, &to_path) {
-    //             eprintln!("There was an error copying the extracted texture '{from_path}' to '{to_path}': {err}");
-    //             process::exit(1);
-    //         }
-    //     }
-    // }
-
     // ensure we start from a consistent state by restoring the particles in the tf misc vpk back to vanilla content.
     if let Err(err) = app.tf_misc_vpk.restore_particles(&app.backup_dir) {
         eprintln!("There was an error restoring some or all particles to the vanilla state: {err}");
@@ -911,7 +815,7 @@ fn main() -> anyhow::Result<()> {
     // TODO: compute size without writing the entire PCF to a buffer in-memory
     for (new_path, processed_pcf) in processed_pcfs {
         let mut writer = BytesMut::new().writer();
-        processed_pcf.pcf.encode(&mut writer)?;
+        processed_pcf.encode(&mut writer)?;
 
         let buffer = writer.into_inner();
         let size = buffer.len() as u64;
