@@ -1,0 +1,26 @@
+[package]
+name = "dmx"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+byteorder = "1.5"
+bytes = "1.11"
+derive_more = { version = "2.1", features = [ "from", "into", "display" ] }
+either = "1.15"
+thiserror = "2.0"
+type-state-builder = { version = "0.5" }
+ordered-float = { version = "5.0", default-features = false }
+ordermap = "1.0"
+nanoserde = { path = "../nanoserde", default-features = false, features = ["std", "json"] }
+itertools = "0.14"
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+todo = "warn"
+empty_loop = "forbid"
+infinite_loop = "deny"
+mem_forget = "deny"
