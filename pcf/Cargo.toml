@@ -13,10 +13,11 @@ thiserror = "2.0"
 type-state-builder = { version = "0.5" }
 ordered-float = { version = "5.0", default-features = false }
 ordermap = "1.0"
+nanoserde = { path = "../nanoserde", default-features = false, features = ["std", "json"] }
 itertools = "0.14"
 
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "allow"
 
 [lints.clippy]
 todo = "warn"

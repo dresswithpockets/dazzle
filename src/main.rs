@@ -31,12 +31,13 @@
 pub mod addon;
 pub mod patch;
 pub mod app;
+mod packing;
 mod vpk_writer;
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     ffi::{CStr, CString},
-    fs::{self, File, copy},
+    fs::{self, File, Metadata, copy},
     io::{self},
     process,
     str::FromStr,
@@ -46,22 +47,17 @@ use bytes::{Buf, BufMut, BytesMut};
 use directories::ProjectDirs;
 use nanoserde::DeJson;
 use ordermap::OrderMap;
-use pcf::{Attribute, ElementsExt, Pcf, attribute::{Color, Vector3}, index::ElementIdx};
+use pcf::{Attribute, Element, Pcf, Root, attribute::{Color, Vector3}, index::ElementIdx, pcf::Symbols};
 use single_instance::SingleInstance;
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf, Utf8UnixPathBuf};
 use vpk::VPK;
 
-use crate::patch::PatchVpkExt;
+use crate::{packing::{PcfBin, PcfBinMap}, patch::PatchVpkExt};
 use crate::addon::{Addon, Sources};
 use crate::app::App;
 
 const SPLIT_BY_2GB: u32 = 2 << 30;
-
-struct ProcessedPcf<'a> {
-    addon: &'a Addon,
-    pcf: Pcf,
-}
 
 mod paths {
     use std::{borrow::Cow, path::Path, str::Utf8Error};
@@ -269,6 +265,359 @@ impl AppBuilder {
     }
 }
 
+/// Decodes [`DEFAULT_PCF_DATA`] and produces a map of `functionName`, to a default attribute value map.
+fn get_default_attribute_map() -> anyhow::Result<HashMap<CString, HashMap<CString, Attribute>>> {
+    let mut reader = DEFAULT_PCF_DATA.reader();
+    let pcf = pcf::decode(&mut reader)?;
+
+    let (symbols, elements) = pcf.into_parts();
+    let mut operator_map = HashMap::new();
+    for operator in elements.into_iter().filter(|el| el.type_idx == symbols.particle_operator_type_idx) {
+        let Some(Attribute::String(function_name)) = operator.attributes.get(&symbols.function_name_name_idx) else {
+            continue;
+        };
+
+        let function_name = function_name.clone();
+        let value_map: HashMap<_, _> = operator.attributes
+            .into_iter()
+            .map(|(name_idx, attribute)| {
+                let name = symbols.get_name(name_idx).expect("this should never happen");
+                (name.clone(), attribute)
+            })
+            .collect();
+
+        operator_map.insert(function_name, value_map);
+    }
+
+    Ok(operator_map)
+}
+
+struct VanillaPcf {
+    name: String,
+    pcf: Pcf,
+    metadata: Metadata,
+}
+
+fn get_vanilla_pcf_info() -> Result<Vec<VanillaPcf>, io::Error> {
+    let entries = fs::read_dir("backup/particles")?;
+    let mut pcfs = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if !metadata.is_file() {
+            continue;
+        }
+
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+
+        if file_name.ends_with("dx80.pcf") || file_name.ends_with("dx90.pcf") {
+            continue;
+        }
+
+        let name = "particles/".to_string() + &file_name;
+
+        let mut reader = File::open_buffered(entry.path())?;
+        let pcf = pcf::decode(&mut reader).unwrap();
+
+        pcfs.push(VanillaPcf {
+            name,
+            pcf,
+            metadata,
+        });
+    }
+
+    Ok(pcfs)
+}
+
+fn default_bin_from(vanilla_pcf: &VanillaPcf) -> PcfBin {
+    let pcf = Pcf::builder()
+        .version(vanilla_pcf.pcf.version())
+        .strings(Symbols {
+            particle_system_definitions_name_idx: 0,
+            particle_system_definition_type_idx: 1,
+            particle_child_type_idx: 2,
+            particle_operator_type_idx: 3,
+            function_name_name_idx: 4,
+            material_name_idx: 5,
+            base: OrderMap::from([
+                (c"particleSystemDefinitions".to_owned(), ()),
+                (c"DmeParticleSystemDefinition".to_owned(), ()),
+                (c"DmeParticleChild".to_owned(), ()),
+                (c"DmeParticleOperator".to_owned(), ()),
+                (c"functionName".to_owned(), ()),
+                (c"material".to_owned(), ()),
+            ]),
+        })
+        .root(Root {
+            type_idx: 0,
+            name: c"untitled".to_owned(),
+            signature: vanilla_pcf.pcf.root().signature,
+            definitions: Vec::new().into_boxed_slice(),
+            attributes: vanilla_pcf.pcf.root().attributes.clone(),
+        })
+        .elements(Vec::new())
+        .build();
+
+    PcfBin {
+        capacity: vanilla_pcf.metadata.len(),
+        name: vanilla_pcf.name.clone(),
+        pcf,
+    }
+}
+
+fn get_vanilla_bin_map() -> Result<PcfBinMap, io::Error> {
+    let entries = fs::read_dir("backup/particles")?;
+    let mut bins = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if !metadata.is_file() {
+            continue;
+        }
+
+        let mut reader = File::open_buffered(entry.path())?;
+        let source_pcf = pcf::decode(&mut reader).unwrap();
+
+        let capacity = metadata.len();
+        let name = "particles/".to_string() + &entry.file_name().to_string_lossy();
+        let pcf = Pcf::builder()
+            .version(source_pcf.version())
+            .strings(Symbols {
+                particle_system_definitions_name_idx: 0,
+                particle_system_definition_type_idx: 1,
+                particle_child_type_idx: 2,
+                particle_operator_type_idx: 3,
+                function_name_name_idx: 4,
+                material_name_idx: 5,
+                base: OrderMap::from([
+                    (c"particleSystemDefinitions".to_owned(), ()),
+                    (c"DmeParticleSystemDefinition".to_owned(), ()),
+                    (c"DmeParticleChild".to_owned(), ()),
+                    (c"DmeParticleOperator".to_owned(), ()),
+                    (c"functionName".to_owned(), ()),
+                    (c"material".to_owned(), ()),
+                ]),
+            })
+            .root(Root {
+                type_idx: 0,
+                name: c"untitled".to_owned(),
+                signature: source_pcf.root().signature,
+                definitions: Vec::new().into_boxed_slice(),
+                attributes: source_pcf.root().attributes.clone(),
+            })
+            .elements(Vec::new())
+            .build();
+
+        bins.push(PcfBin {
+            capacity,
+            name,
+            pcf,
+        });
+    }
+
+    Ok(PcfBinMap::new(bins))
+}
+
+fn next() -> anyhow::Result<()> {
+    // TODO: open every vanilla PCF and create a list of every vanilla particle system definition that must exist
+
+    let operator_defaults = get_default_attribute_map()?;
+    let particle_system_defaults: HashMap<&'static CStr, Attribute> = HashMap::from([
+        (c"batch particle systems", false.into()),
+        (c"bounding_box_min", Vector3((-10.0).into(), (-10.0).into(), (-10.0).into()).into()),
+        (c"bounding_box_max", Vector3(10.0.into(), 10.0.into(), 10.0.into()).into()),
+        (c"color", Color(255, 255, 255, 255).into()),
+        (c"control point to disable rendering if it is the camera", (-1).into()),
+        (c"cull_control_point", 0.into()),
+        (c"cull_cost", 1.0.into()),
+        (c"cull_radius", 0.0.into()),
+        (c"cull_replacement_definition", c"".to_owned().into()),
+        (c"group id", 0.into()),
+        (c"initial_particles", 0i32.into()),
+        (c"max_particles", 1000i32.into()),
+        (c"material", c"vgui/white".to_owned().into()),
+        (c"max_particles", 1000.into()),
+        (c"maximum draw distance", 100000.0.into()),
+        (c"maximum sim tick rate", 0.0.into()),
+        (c"maximum time step", 0.1.into()),
+        (c"minimum rendered frames", 0.into()),
+        (c"minimum sim tick rate", 0.0.into()),
+        (c"preventNameBasedLookup", false.into()),
+        (c"radius", 5.0.into()),
+        (c"rotation", 0.0.into()),
+        (c"rotation_speed", 0.0.into()),
+        (c"sequence_number", 0.into()),
+        (c"sequence_number1", 0.into()),
+        (c"Sort particles", true.into()),
+        (c"time to sleep when not drawn", 8.0.into()),
+        (c"view model effect", false.into())
+    ]);
+
+    // vanilla PCFs have a set size, and we have to fit our particle systems into those PCFs. It doesn't matter which 
+    // PCF they land in so long as they fit. We're solving this using a best-fit bin packing algorithm.
+    println!("loading vanilla pcf info");
+    let vanilla_pcfs: Vec<_> = get_vanilla_pcf_info()?
+        .into_iter()
+        .map(|vanilla_pcf| {
+            println!("stripping {} of unecessary defaults", vanilla_pcf.name);
+            let pcf = vanilla_pcf.pcf.stripped(&particle_system_defaults, &operator_defaults);
+            VanillaPcf {
+                pcf,
+                ..vanilla_pcf
+            }
+        })
+        .collect();
+
+    // TODO: get vanilla PCF graphs, and map particle system name to PCF graph index for later lookup by vanilla system name
+    println!("getting vanilla particle system map");
+    let vanilla_graphs: Vec<_> = vanilla_pcfs
+        .iter()
+        .flat_map(|vanilla_pcf| {
+            vanilla_pcf.pcf
+                .get_system_graph()
+                .into_iter()
+                .map(|graph| {
+                    let names: Vec<_> = graph.iter()
+                        .filter_map(|element_idx|{
+                            let element = vanilla_pcf.pcf.get(*element_idx)?;
+                            if element.type_idx == vanilla_pcf.pcf.strings().particle_system_definition_type_idx {
+                                Some(&element.name)
+                            } else {
+                                None
+                            }
+                        }).collect();
+
+                    (&vanilla_pcf.pcf, graph, names)
+                })
+            })
+        .collect();
+
+    // TODO: map all vanilla particle system names to (&Pcf, HashSet<ElementIdx>) graph group
+    // let mut vanilla_system_to_graph = HashMap::new();
+    // for (pcf, graphs) in &vanilla_graphs {
+    //     for 
+    // }
+
+    let vanilla_particle_systems: HashMap<_, _> = vanilla_pcfs
+        .iter()
+        .flat_map(|vanilla_pcf| {
+            // since we always copy child particle systems over with the parent, we need to only include root particle systems with no parent
+            vanilla_pcf.pcf
+                .get_root_particle_systems()
+                .into_iter()
+                .map(|(idx, el)| {
+                    (&el.name, (&vanilla_pcf.pcf, idx))
+                })
+            
+            // vanilla_pcf.pcf
+            //     .get_particle_system_definitions()
+            //     .map(|(idx, el)|{
+            //         (&el.name, (&vanilla_pcf.pcf, idx))
+            //     })
+        })
+        .collect();
+    
+    println!("discovered {} vanilla particle systems", vanilla_particle_systems.len());
+
+    println!("initializing PCF bins from the vanilla PCFs");
+    let bins: Vec<PcfBin> = vanilla_pcfs.iter().map(default_bin_from).collect();
+    let mut bins = PcfBinMap::new(bins);
+
+    println!("maximum PCF capacity: {}", bins.iter().map(|bin| bin.capacity).sum::<u64>());
+    println!("stripped PCF load: {}", vanilla_pcfs.iter().map(|vanilla_pcf| vanilla_pcf.pcf.encoded_size()).sum::<u64>());
+
+    println!("setting up app");
+    let tf_dir: Utf8PlatformPathBuf = ["local_test", "tf"].iter().collect();
+    let mut app = AppBuilder::with_tf_dir(tf_dir.clone()).build()?;
+
+    // TODO: detect tf directory
+    // TODO: prompt user to verify or provide their own tf directory after discovery attempt
+
+    println!("loading addon sources");
+    let sources = match Sources::read_dir(&app.addons_dir) {
+        Ok(sources) => sources,
+        Err(err) => {
+            eprintln!("Couldn't open some addons: {err}");
+            process::exit(1);
+        }
+    };
+
+    for (path, err) in &sources.failures {
+        eprintln!(
+            "There was an error reading the addon source '{}': {err}",
+            path.display()
+        );
+    }
+
+    // to simplify processing and copying data from addons, we extract it before hand.
+    // this means the interface into each addon becomes effectively identical - we can just read/write to them as normal
+    // files without modifying the original addon files.
+    println!("extracting addon sources to working directory...");
+    let mut extracted_addons = Vec::new();
+    for source in sources.sources {
+        let extracted = match source.extract_as_subfolder_in(&app.extracted_content_dir) {
+            Ok(extracted) => extracted,
+            Err(err) => {
+                eprintln!("Couldn't extract some mods: {err}");
+                process::exit(1);
+            }
+        };
+
+        extracted_addons.push(extracted);
+    }
+
+    let mut addons = Vec::new();
+    println!("parsing extracted addon content..");
+    for addon in extracted_addons {
+        let content = match addon.parse_content() {
+            Ok(content) => content,
+            Err(err) => {
+                eprintln!("Couldn't parse content of some mods: {err}");
+                process::exit(1);
+            }
+        };
+
+        println!("parsed {}", content.source_path.file_name().unwrap());
+        addons.push(content);
+    }
+
+    // first we bin-pack our addon's custom particles.
+    println!("bin-packing addon particles...");
+    // for addon in addons {
+    //     for (path, pcf) in addon.particle_files {
+    //         println!("stripping {path} of unecessary defaults");
+            
+    //         let pcf = pcf.stripped(&particle_system_defaults, &operator_defaults);
+    //         for graph in pcf.get_system_graph() {
+    //             println!("bin-packing a graph with '{}' elements", graph.len());
+    //             bins.pack_group(&pcf, &graph)?;
+    //         }
+    //     }
+    // }
+
+    // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank 
+    // slate for our addons; so, we pack every vanilla particle system not present in the bins.
+    println!("bin-packing missing vanilla addon particles...");
+    for (pcf, elements, names) in vanilla_graphs {
+        if names.iter().any(|name| !bins.has_system_name(name)) {
+            // println!("bin-packing a missing vanilla particle from {:?}", names.iter().map(|n|n.display()));
+            if let Err(_) = bins.pack_group(pcf, &elements) {
+                eprintln!("There wasn't enough space...");
+                let mut load = 0;
+                for bin in bins.iter() {
+                    load += bin.pcf.encoded_size();
+                    println!("{}: {} / {}", bin.name, bin.pcf.encoded_size(), bin.capacity);
+                }
+                println!("consumed load: {load}");
+                process::exit(1);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     /*
        TODO: if not already configured, detect/select a tf/ directory
@@ -276,6 +625,9 @@ fn main() -> anyhow::Result<()> {
        TODO: tui for selecting addons to install/uninstall
        TODO: detect conflicts in selected addons
     */
+
+    next()?;
+    process::exit(1);
 
     let particle_system_defaults: HashMap<&'static CStr, Attribute> = HashMap::from([
         (c"batch particle systems", false.into()),

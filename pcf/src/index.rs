@@ -1,9 +1,9 @@
 use std::{ops::{Add, AddAssign}, u32};
 
-use derive_more::Into;
+use derive_more::{Display, Into};
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, Into, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Into, Hash, PartialEq, Eq, PartialOrd, Ord, Display)]
 // An index to an element in the [`Pcf`], starts at 1 and does not include the Root element.
 pub struct ElementIdx(u32);
 

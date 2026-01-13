@@ -35,9 +35,9 @@ impl App {
 
             println!("merging systems from {file_path}");
             // grouping the elements from our addon by the vanilla PCF they're mapped to in particle_system_map.json.
-            let mut systems_by_vanilla_pcf_path = HashMap::<&String, OrderMap<&CString, &pcf::Element>>::new();
+            let mut systems_by_vanilla_pcf_path = HashMap::<&String, OrderMap<&CString, (ElementIdx, &pcf::Element)>>::new();
             println!("  has {} elements", pcf.elements().len());
-            for element in pcf.elements() {
+            for (element_idx, element) in pcf.elements().iter().enumerate() {
                 let Some(pcf_path) = self.vanilla_system_to_pcf.get(&element.name) else {
                     continue;
                 };
@@ -50,7 +50,7 @@ impl App {
                     .entry(pcf_path)
                     .or_default()
                     .entry(&element.name)
-                    .or_insert(element);
+                    .or_insert((element_idx.into(), element));
             }
 
             for (target_pcf_path, matched_systems) in systems_by_vanilla_pcf_path {
@@ -58,7 +58,8 @@ impl App {
                 // matched_elements contains a subset of the original elements in the pcf. As a result, any
                 // Element or ElementArray attributes may not point to the correct index - the order is
                 // retained but the indices aren't. So, we need to reindex any references to other elements in the set.
-                let new_elements = Self::reindex_elements(pcf, matched_systems.into_values());
+                
+                let new_elements = Pcf::reindex_elements(pcf, matched_systems.values().map(|el| &el.0));
 
                 // the root element always stores an attribute "particleSystemDefinitions" which stores an ElementArray
                 // containing the index of every DmeParticleSystemDefinition-type element. We've changed the indices of
@@ -96,17 +97,17 @@ impl App {
         processed_target_pcf_paths
     }
 
-    fn reindex_elements<'a>(
+    pub(crate) fn reindex_elements<'a>(
         source_pcf: &'a Pcf,
-        systems: impl IntoIterator<Item = &'a pcf::Element>,
+        systems: impl IntoIterator<Item = &'a ElementIdx>,
     ) -> Vec<pcf::Element> {
         let mut new_elements = Vec::new();
         let mut original_elements: BTreeMap<ElementIdx, &pcf::Element> = BTreeMap::new();
-        for system in systems {
-            let system_idx = source_pcf.get_element_index(&system.name).expect("this should never fail");
-            let dependencies = source_pcf.get_dependencies(system_idx);
+        for system_idx in systems {
+            let system = source_pcf.get(*system_idx).expect("this should never fail");
+            let dependencies = source_pcf.get_dependencies(*system_idx);
 
-            original_elements.insert(system_idx, system);
+            original_elements.insert(*system_idx, system);
 
             for child_idx in dependencies {
                 let element = source_pcf.get(child_idx).expect("this should never happen");
