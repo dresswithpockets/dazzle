@@ -59,7 +59,7 @@ impl Default for Attribute {
 }
 
 impl Attribute {
-    fn as_type(&self) -> u8 {
+    pub fn as_type(&self) -> u8 {
         match self {
             Attribute::Element(_) => 1,
             Attribute::Integer(_) => 2,
