@@ -553,7 +553,7 @@ pub struct Color(pub u8, pub u8, pub u8, pub u8);
 #[display("Vector2({_0:.2}, {_1:.2})")]
 pub struct Vector2(pub Float, pub Float);
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, derive_more::Display)]
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, derive_more::Display)]
 #[display("Vector3({_0:.2}, {_1:.2}, {_2:.2})")]
 pub struct Vector3(pub Float, pub Float, pub Float);
 
