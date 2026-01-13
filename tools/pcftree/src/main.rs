@@ -166,7 +166,7 @@ fn create_attribute_child(pcf: &Pcf, node: &mut TreeBuilder, name_idx: NameIndex
             child.end_child()
         }
         Attribute::Integer(value) => node.add_empty_child(format!("{name}: {value}")),
-        Attribute::Float(value) => node.add_empty_child(format!("{name}: {value}")),
+        Attribute::Float(value) => node.add_empty_child(format!("{name}: {value:.2}")),
         Attribute::Bool(value) => node.add_empty_child(format!("{name}: {value}")),
         Attribute::String(value) => node.add_empty_child(format!("{name}: {}", value.display())),
         Attribute::Binary(value) => node.add_empty_child(format!("{name}: {value:#?}")),
@@ -183,7 +183,13 @@ fn create_attribute_child(pcf: &Pcf, node: &mut TreeBuilder, name_idx: NameIndex
             child.end_child()
         }
         Attribute::IntegerArray(items) => add_array(name, node, items),
-        Attribute::FloatArray(items) => add_array(name, node, items),
+        Attribute::FloatArray(items) => {
+            let child = node.begin_child(name);
+            for item in items {
+                child.add_empty_child(format!("{item:.2}"));
+            }
+            child.end_child()
+        },
         Attribute::BoolArray(items) => add_array(name, node, items),
         Attribute::StringArray(items) => {
             let child = node.begin_child(name);
