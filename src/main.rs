@@ -29,9 +29,9 @@
 #![feature(push_mut)]
 
 pub mod addon;
-pub mod patch;
 pub mod app;
 mod packing;
+pub mod patch;
 mod vpk_writer;
 
 use std::{
@@ -47,15 +47,23 @@ use bytes::{Buf, BufMut, BytesMut};
 use directories::ProjectDirs;
 use nanoserde::DeJson;
 use ordermap::OrderMap;
-use pcf::{Attribute, Element, Pcf, Root, attribute::{Color, Vector3}, index::ElementIdx, pcf::Symbols};
+use pcf::{
+    Attribute, Element, Pcf, Root,
+    attribute::{Color, Vector3},
+    index::ElementIdx,
+    pcf::Symbols,
+};
 use single_instance::SingleInstance;
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf, Utf8UnixPathBuf};
 use vpk::VPK;
 
-use crate::{packing::{PcfBin, PcfBinMap}, patch::PatchVpkExt};
 use crate::addon::{Addon, Sources};
 use crate::app::App;
+use crate::{
+    packing::{PcfBin, PcfBinMap},
+    patch::PatchVpkExt,
+};
 
 const SPLIT_BY_2GB: u32 = 2 << 30;
 
@@ -272,13 +280,17 @@ fn get_default_attribute_map() -> anyhow::Result<HashMap<CString, HashMap<CStrin
 
     let (symbols, elements) = pcf.into_parts();
     let mut operator_map = HashMap::new();
-    for operator in elements.into_iter().filter(|el| el.type_idx == symbols.particle_operator_type_idx) {
+    for operator in elements
+        .into_iter()
+        .filter(|el| el.type_idx == symbols.particle_operator_type_idx)
+    {
         let Some(Attribute::String(function_name)) = operator.attributes.get(&symbols.function_name_name_idx) else {
             continue;
         };
 
         let function_name = function_name.clone();
-        let value_map: HashMap<_, _> = operator.attributes
+        let value_map: HashMap<_, _> = operator
+            .attributes
             .into_iter()
             .map(|(name_idx, attribute)| {
                 let name = symbols.get_name(name_idx).expect("this should never happen");
@@ -320,11 +332,7 @@ fn get_vanilla_pcf_info() -> Result<Vec<VanillaPcf>, io::Error> {
         let mut reader = File::open_buffered(entry.path())?;
         let pcf = pcf::decode(&mut reader).unwrap();
 
-        pcfs.push(VanillaPcf {
-            name,
-            pcf,
-            metadata,
-        });
+        pcfs.push(VanillaPcf { name, pcf, metadata });
     }
 
     Ok(pcfs)
@@ -409,11 +417,7 @@ fn get_vanilla_bin_map() -> Result<PcfBinMap, io::Error> {
             .elements(Vec::new())
             .build();
 
-        bins.push(PcfBin {
-            capacity,
-            name,
-            pcf,
-        });
+        bins.push(PcfBin { capacity, name, pcf });
     }
 
     Ok(PcfBinMap::new(bins))
@@ -425,8 +429,14 @@ fn next() -> anyhow::Result<()> {
     let operator_defaults = get_default_attribute_map()?;
     let particle_system_defaults: HashMap<&'static CStr, Attribute> = HashMap::from([
         (c"batch particle systems", false.into()),
-        (c"bounding_box_min", Vector3((-10.0).into(), (-10.0).into(), (-10.0).into()).into()),
-        (c"bounding_box_max", Vector3(10.0.into(), 10.0.into(), 10.0.into()).into()),
+        (
+            c"bounding_box_min",
+            Vector3((-10.0).into(), (-10.0).into(), (-10.0).into()).into(),
+        ),
+        (
+            c"bounding_box_max",
+            Vector3(10.0.into(), 10.0.into(), 10.0.into()).into(),
+        ),
         (c"color", Color(255, 255, 255, 255).into()),
         (c"control point to disable rendering if it is the camera", (-1).into()),
         (c"cull_control_point", 0.into()),
@@ -451,10 +461,10 @@ fn next() -> anyhow::Result<()> {
         (c"sequence_number1", 0.into()),
         (c"Sort particles", true.into()),
         (c"time to sleep when not drawn", 8.0.into()),
-        (c"view model effect", false.into())
+        (c"view model effect", false.into()),
     ]);
 
-    // vanilla PCFs have a set size, and we have to fit our particle systems into those PCFs. It doesn't matter which 
+    // vanilla PCFs have a set size, and we have to fit our particle systems into those PCFs. It doesn't matter which
     // PCF they land in so long as they fit. We're solving this using a best-fit bin packing algorithm.
     println!("loading vanilla pcf info");
     let vanilla_pcfs: Vec<_> = get_vanilla_pcf_info()?
@@ -462,10 +472,7 @@ fn next() -> anyhow::Result<()> {
         .map(|vanilla_pcf| {
             println!("stripping {} of unecessary defaults", vanilla_pcf.name);
             let pcf = vanilla_pcf.pcf.stripped(&particle_system_defaults, &operator_defaults);
-            VanillaPcf {
-                pcf,
-                ..vanilla_pcf
-            }
+            VanillaPcf { pcf, ..vanilla_pcf }
         })
         .collect();
 
@@ -474,42 +481,40 @@ fn next() -> anyhow::Result<()> {
     let vanilla_graphs: Vec<_> = vanilla_pcfs
         .iter()
         .flat_map(|vanilla_pcf| {
-            vanilla_pcf.pcf
-                .get_system_graph()
-                .into_iter()
-                .map(|graph| {
-                    let names: Vec<_> = graph.iter()
-                        .filter_map(|element_idx|{
-                            let element = vanilla_pcf.pcf.get(*element_idx)?;
-                            if element.type_idx == vanilla_pcf.pcf.strings().particle_system_definition_type_idx {
-                                Some(&element.name)
-                            } else {
-                                None
-                            }
-                        }).collect();
+            vanilla_pcf.pcf.get_system_graph().into_iter().map(|graph| {
+                let names: Vec<_> = graph
+                    .iter()
+                    .filter_map(|element_idx| {
+                        let element = vanilla_pcf.pcf.get(*element_idx)?;
+                        if element.type_idx == vanilla_pcf.pcf.strings().particle_system_definition_type_idx {
+                            Some(&element.name)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
 
-                    (&vanilla_pcf.pcf, graph, names)
-                })
+                (&vanilla_pcf.pcf, graph, names)
             })
+        })
         .collect();
 
     // TODO: map all vanilla particle system names to (&Pcf, HashSet<ElementIdx>) graph group
     // let mut vanilla_system_to_graph = HashMap::new();
     // for (pcf, graphs) in &vanilla_graphs {
-    //     for 
+    //     for
     // }
 
     let vanilla_particle_systems: HashMap<_, _> = vanilla_pcfs
         .iter()
         .flat_map(|vanilla_pcf| {
             // since we always copy child particle systems over with the parent, we need to only include root particle systems with no parent
-            vanilla_pcf.pcf
+            vanilla_pcf
+                .pcf
                 .get_root_particle_systems()
                 .into_iter()
-                .map(|(idx, el)| {
-                    (&el.name, (&vanilla_pcf.pcf, idx))
-                })
-            
+                .map(|(idx, el)| (&el.name, (&vanilla_pcf.pcf, idx)))
+
             // vanilla_pcf.pcf
             //     .get_particle_system_definitions()
             //     .map(|(idx, el)|{
@@ -517,15 +522,24 @@ fn next() -> anyhow::Result<()> {
             //     })
         })
         .collect();
-    
+
     println!("discovered {} vanilla particle systems", vanilla_particle_systems.len());
 
     println!("initializing PCF bins from the vanilla PCFs");
     let bins: Vec<PcfBin> = vanilla_pcfs.iter().map(default_bin_from).collect();
     let mut bins = PcfBinMap::new(bins);
 
-    println!("maximum PCF capacity: {}", bins.iter().map(|bin| bin.capacity).sum::<u64>());
-    println!("stripped PCF load: {}", vanilla_pcfs.iter().map(|vanilla_pcf| vanilla_pcf.pcf.encoded_size()).sum::<u64>());
+    println!(
+        "maximum PCF capacity: {}",
+        bins.iter().map(|bin| bin.capacity).sum::<u64>()
+    );
+    println!(
+        "stripped PCF load: {}",
+        vanilla_pcfs
+            .iter()
+            .map(|vanilla_pcf| vanilla_pcf.pcf.encoded_size())
+            .sum::<u64>()
+    );
 
     println!("setting up app");
     let tf_dir: Utf8PlatformPathBuf = ["local_test", "tf"].iter().collect();
@@ -587,7 +601,7 @@ fn next() -> anyhow::Result<()> {
     // for addon in addons {
     //     for (path, pcf) in addon.particle_files {
     //         println!("stripping {path} of unecessary defaults");
-            
+
     //         let pcf = pcf.stripped(&particle_system_defaults, &operator_defaults);
     //         for graph in pcf.get_system_graph() {
     //             println!("bin-packing a graph with '{}' elements", graph.len());
@@ -596,7 +610,7 @@ fn next() -> anyhow::Result<()> {
     //     }
     // }
 
-    // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank 
+    // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank
     // slate for our addons; so, we pack every vanilla particle system not present in the bins.
     println!("bin-packing missing vanilla addon particles...");
     for (pcf, elements, names) in vanilla_graphs {
@@ -631,8 +645,14 @@ fn main() -> anyhow::Result<()> {
 
     let particle_system_defaults: HashMap<&'static CStr, Attribute> = HashMap::from([
         (c"batch particle systems", false.into()),
-        (c"bounding_box_min", Vector3((-10.0).into(), (-10.0).into(), (-10.0).into()).into()),
-        (c"bounding_box_max", Vector3(10.0.into(), 10.0.into(), 10.0.into()).into()),
+        (
+            c"bounding_box_min",
+            Vector3((-10.0).into(), (-10.0).into(), (-10.0).into()).into(),
+        ),
+        (
+            c"bounding_box_max",
+            Vector3(10.0.into(), 10.0.into(), 10.0.into()).into(),
+        ),
         (c"color", Color(255, 255, 255, 255).into()),
         (c"control point to disable rendering if it is the camera", (-1).into()),
         (c"cull_control_point", 0.into()),
@@ -657,7 +677,7 @@ fn main() -> anyhow::Result<()> {
         (c"sequence_number1", 0.into()),
         (c"Sort particles", true.into()),
         (c"time to sleep when not drawn", 8.0.into()),
-        (c"view model effect", false.into())
+        (c"view model effect", false.into()),
     ]);
 
     let operator_defaults: HashMap<&'static CStr, Attribute> = HashMap::from([
@@ -673,7 +693,10 @@ fn main() -> anyhow::Result<()> {
         (c"amount of bounce", 0.0.into()),
         (c"amount of slide", 0.0.into()),
         (c"animation rate", 0.1.into()),
-        (c"bulge control 0=random 1=orientation of start pnt 2=orientation of end point", 0.into()),
+        (
+            c"bulge control 0=random 1=orientation of start pnt 2=orientation of end point",
+            0.into(),
+        ),
         (c"brush only", false.into()),
         (c"collision group", c"NONE".to_owned().into()),
         (c"collision mode", 0.into()),
@@ -800,9 +823,7 @@ fn main() -> anyhow::Result<()> {
             // HACK: blood_trail.pcf is really small; even a minor change to it can cause it to be too big for VPK patching.
             // TF2 doesn't really care in which PCF the particle system is defined. So, we can just rename blood_trail.pcf to
             // npc_fx.pcf.
-            processed_pcfs
-                .entry(target_pcf_path)
-                .or_insert(stripped_pcf);
+            processed_pcfs.entry(target_pcf_path).or_insert(stripped_pcf);
         }
     }
 
@@ -867,12 +888,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // we can finally generate our _dazzle_addons VPKs from our addon contents.
-    vpk_writer::pack_directory(
-        &app.working_vpk_dir,
-        &app.tf_custom_dir,
-        "_dazzle_addons",
-        SPLIT_BY_2GB,
-    )?;
+    vpk_writer::pack_directory(&app.working_vpk_dir, &app.tf_custom_dir, "_dazzle_addons", SPLIT_BY_2GB)?;
 
     // NOTE(dress) after packing everything, cueki does a full-scan of every VPK & file in tf/custom for $ignorez 1 then
     //             replaces each with spaces. This isn't necessary at all, so we just don't do it; anyone can bypass her
@@ -907,7 +923,6 @@ fn main() -> anyhow::Result<()> {
     // TODO: figure out how particle_system_map.json is generated. Is it just a map of vanilla PCF paths to named particle system definition elements?
 
     // TODO: process and patch particles into main VPK, handling duplicate effects
-
 
     Ok(())
 }
@@ -944,7 +959,9 @@ fn copy_addon_structure(in_dir: &Utf8PlatformPath, out_dir: &Utf8PlatformPath) -
             let path = entry.path();
             let path = paths::to_typed(&path).absolutize()?;
             let new_out_dir = out_dir.join(path.strip_prefix(in_dir)?);
-            if let Err(err) = fs::create_dir(&new_out_dir) && err.kind() != io::ErrorKind::AlreadyExists {
+            if let Err(err) = fs::create_dir(&new_out_dir)
+                && err.kind() != io::ErrorKind::AlreadyExists
+            {
                 return Err(err.into());
             }
 

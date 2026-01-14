@@ -279,7 +279,7 @@ fn get_vpk_tree(source: &Utf8PlatformPath) -> Result<VpkTree<Entry>, Error> {
             let metadata = entry.metadata()?;
             if metadata.is_dir() {
                 visit(source, &source_path, tree)?;
-                continue
+                continue;
             }
 
             let size = metadata.size() as u32;

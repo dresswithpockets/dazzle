@@ -1,7 +1,9 @@
 use byteorder::WriteBytesExt;
 use glob::glob;
 use std::{
-    fs::{self, File, OpenOptions}, io::{self, Read, Seek, SeekFrom}, path::Path
+    fs::{self, File, OpenOptions},
+    io::{self, Read, Seek, SeekFrom},
+    path::Path,
 };
 
 use relative_path::RelativePathBuf;

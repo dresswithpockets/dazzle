@@ -1,4 +1,7 @@
-use std::{collections::{BTreeMap, HashMap}, ffi::CString};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ffi::CString,
+};
 
 use ordermap::OrderMap;
 use pcf::{ElementsExt, Pcf, index::ElementIdx};
@@ -35,7 +38,8 @@ impl App {
 
             println!("merging systems from {file_path}");
             // grouping the elements from our addon by the vanilla PCF they're mapped to in particle_system_map.json.
-            let mut systems_by_vanilla_pcf_path = HashMap::<&String, OrderMap<&CString, (ElementIdx, &pcf::Element)>>::new();
+            let mut systems_by_vanilla_pcf_path =
+                HashMap::<&String, OrderMap<&CString, (ElementIdx, &pcf::Element)>>::new();
             println!("  has {} elements", pcf.elements().len());
             for (element_idx, element) in pcf.elements().iter().enumerate() {
                 let Some(pcf_path) = self.vanilla_system_to_pcf.get(&element.name) else {
@@ -58,7 +62,7 @@ impl App {
                 // matched_elements contains a subset of the original elements in the pcf. As a result, any
                 // Element or ElementArray attributes may not point to the correct index - the order is
                 // retained but the indices aren't. So, we need to reindex any references to other elements in the set.
-                
+
                 let new_elements = Pcf::reindex_elements(pcf, matched_systems.values().map(|el| &el.0));
 
                 // the root element always stores an attribute "particleSystemDefinitions" which stores an ElementArray
@@ -225,10 +229,7 @@ impl App {
     // }
 
     #[cfg(not(feature = "split_item_fx_pcf"))]
-    pub fn process_mapped_particles(
-        target_pcf: Pcf,
-        mut pcf_files: Vec<Pcf>,
-    ) -> anyhow::Result<Pcf> {
+    pub fn process_mapped_particles(target_pcf: Pcf, mut pcf_files: Vec<Pcf>) -> anyhow::Result<Pcf> {
         // We took care of duplicate elements from our addon when grouping addon elements by vanilla PCF, so we
         // don't do any special handling for duplicate elements here.
         let merged_pcf = pcf_files.pop().expect("there should be at least one pcf in the group");

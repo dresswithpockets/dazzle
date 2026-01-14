@@ -25,7 +25,10 @@ pub enum Error {
 impl PcfBinMap {
     pub fn new(mut bins: Vec<PcfBin>) -> Self {
         bins.sort_by(|a, b| b.pcf.encoded_size().cmp(&a.pcf.encoded_size()));
-        Self { bins, system_names: HashSet::new() }
+        Self {
+            bins,
+            system_names: HashSet::new(),
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &PcfBin> {
@@ -37,12 +40,12 @@ impl PcfBinMap {
     }
 
     /// Pack the element in `from` at `element_idx` into a [`Pcf`] in `self`.
-    /// 
+    ///
     /// Uses a best-fit bin-packing algorithm to efficiently pack the element into a [`Pcf`], taking into account the
     /// size that the [`Pcf`] would increase by if the element were to be merged into it.
-    /// 
+    ///
     /// ## Errors
-    /// 
+    ///
     /// If the element can't be fit into any [`Pcf`], then [`Error::NoFit`] is returned.
     pub fn pack_group<'a>(&mut self, from: &'a Pcf, elements: &[ElementIdx]) -> Result<(), Error> {
         let mut packed = false;
@@ -53,7 +56,8 @@ impl PcfBinMap {
                 continue;
             }
 
-            self.system_names.extend(elements.iter().map(|idx| from.get(*idx).unwrap().name.clone()));
+            self.system_names
+                .extend(elements.iter().map(|idx| from.get(*idx).unwrap().name.clone()));
 
             let new_pcf = from.new_from_elements(elements);
             bin.pcf.merge_in(new_pcf).unwrap();
@@ -65,7 +69,8 @@ impl PcfBinMap {
 
         if packed {
             // make sure the bins are always sorted by encoded size by descending order
-            self.bins.sort_by(|a, b| b.pcf.encoded_size().cmp(&a.pcf.encoded_size()));
+            self.bins
+                .sort_by(|a, b| b.pcf.encoded_size().cmp(&a.pcf.encoded_size()));
             Ok(())
         } else {
             Err(Error::NoFit)
@@ -73,12 +78,12 @@ impl PcfBinMap {
     }
 
     /// Pack the element in `from` at `element_idx` into a [`Pcf`] in `self`.
-    /// 
+    ///
     /// Uses a best-fit bin-packing algorithm to efficiently pack the element into a [`Pcf`], taking into account the
     /// size that the [`Pcf`] would increase by if the element were to be merged into it.
-    /// 
+    ///
     /// ## Errors
-    /// 
+    ///
     /// If the element can't be fit into any [`Pcf`], then [`Error::NoFit`] is returned.
     pub fn pack(&mut self, from: &Pcf, element_idx: ElementIdx) -> Result<(), Error> {
         let mut packed = false;
@@ -93,7 +98,7 @@ impl PcfBinMap {
             self.system_names.insert(element_name);
 
             let new_pcf = Pcf::new_from_elements(from, &[element_idx]);
-            
+
             bin.pcf.merge_in(new_pcf).unwrap();
 
             assert_eq!(estimated_size, bin.pcf.encoded_size());
@@ -103,7 +108,8 @@ impl PcfBinMap {
 
         if packed {
             // make sure the bins are always sorted by encoded size by descending order
-            self.bins.sort_by(|a, b| b.pcf.encoded_size().cmp(&a.pcf.encoded_size()));
+            self.bins
+                .sort_by(|a, b| b.pcf.encoded_size().cmp(&a.pcf.encoded_size()));
             Ok(())
         } else {
             Err(Error::NoFit)
