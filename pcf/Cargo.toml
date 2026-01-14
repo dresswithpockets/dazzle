@@ -8,6 +8,7 @@ anyhow = "1.0"
 byteorder = "1.5"
 bytes = "1.11"
 derive_more = { version = "2.1", features = [ "from", "into", "display" ] }
+dmx = { path = "../dmx" }
 either = "1.15"
 thiserror = "2.0"
 type-state-builder = { version = "0.5" }

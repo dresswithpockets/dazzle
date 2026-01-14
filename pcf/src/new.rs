@@ -1,0 +1,638 @@
+use std::{
+    collections::HashMap,
+    ffi::{CStr, CString},
+};
+
+use derive_more::From;
+use dmx::{
+    ElementIdx, Signature,
+    dmx::{Dmx, Element, Version},
+};
+use itertools::Itertools;
+use ordermap::{OrderMap, OrderSet};
+use thiserror::Error;
+
+use dmx::attribute::{Bool8, Color, Float, Matrix, Vector2, Vector3, Vector4};
+
+pub type SymbolIdx = u16;
+pub type ParticleSystemIdx = usize;
+
+#[derive(Debug)]
+pub struct Pcf {
+    pub version: Version,
+    pub symbols: Symbols,
+    pub root: Root,
+}
+
+#[derive(Debug)]
+pub struct Root {
+    pub name: String,
+    pub signature: Signature,
+    pub particle_systems: Box<[ParticleSystem]>,
+    pub attributes: OrderMap<SymbolIdx, Attribute>,
+}
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("The DMX contains no elements, so it cant be a valid PCF")]
+    NoElements,
+
+    #[error("The root element is missing a `partileSystemDefintions` array, so a valid PCF cannot be parsed")]
+    MissingRootDefintions,
+
+    #[error("The particle system definitions array contains a reference to an element that doesn't exist")]
+    MissingParticleSystem(ElementIdx),
+
+    #[error(
+        "The particle system definitions array contains a reference to an element that is not a valid particle system"
+    )]
+    InvalidParticleSystem(ElementIdx),
+
+    #[error("A particle system references a child element that does not exist")]
+    MissingParticleChild(ElementIdx),
+
+    #[error("A particle system references a child element that is not a valid DmeParticleChild")]
+    InvalidParticleChild(ElementIdx),
+
+    #[error("The child element is missing a valid child attribute")]
+    MissingChild,
+
+    #[error("The operator element is missing a valid function name attribute")]
+    MissingFunctionName,
+
+    #[error("The element contains an unexpected Element or ElementArray attribute")]
+    UnexpectedElementReference,
+
+    #[error("A particle system contains a reference to an operator that is not a valid DmeParticleOperator")]
+    InvalidParticleOperator(ElementIdx),
+
+    #[error("A particle system contains a reference to an operator that doesn't exist")]
+    MissingOperator(ElementIdx),
+
+    #[error("The DMX string list does not contain 'DmElement', so it cant be a valid PCF")]
+    MissingDatamodelElementString,
+
+    #[error("The DMX string list does not contain 'particleSystemDefinitions', so it cant be a valid PCF")]
+    MissingRootDefinitionString,
+
+    #[error("The DMX string list does not contain 'DmeParticleSystemDefinition', so it cant be a valid PCF")]
+    MissingSystemDefinitionString,
+}
+
+impl TryFrom<Dmx> for Pcf {
+    type Error = Error;
+
+    fn try_from(value: Dmx) -> Result<Self, Self::Error> {
+        let symbols: Symbols = value.strings.try_into()?;
+
+        let root_element = value.elements.first().ok_or(Error::NoElements)?;
+        let Some(dmx::attribute::Attribute::ElementArray(system_indices)) =
+            root_element.attributes.get(&symbols.particle_system_definitions)
+        else {
+            return Err(Error::MissingRootDefintions);
+        };
+
+        // `particle_systems` will contain each particle system in the same order defined in `system_indices`; if we
+        // didn't map old indices to new indices, we'd have to do a second pass over each particle system after each
+        // index is known in order to map the old child element indices. This lets us avoid the second pass entirely.
+        let system_indices: HashMap<_, _> = system_indices
+            .iter()
+            .enumerate()
+            .map(|(new_idx, old_idx)| (*old_idx, ElementIdx::from(new_idx)))
+            .collect();
+
+        // the elements list is an association list for a Directed Acyclic Graph.
+        // there is always at least a root element, usually named "untitled", which always has an attribute named
+        // "particleSystemDefinitions" - an array containing indices into the elements list. Each of these indices
+        // will always be a DmeParticleSystemDefinition.
+        //
+        // Each DmeParticleSystemDefinition element can contains a handful of attributes, one of these attributes
+        // - "children" - is also an element array containing indices into the elements list. These indices will point
+        // to DmeParticleChild elements. DmeParticleChild always have a "child" attribute whose value is a single element
+        // index; the referenced child element will always be another DmeParticleSystemDefinition.
+        //
+        // Some other DmeParticleSystemDefinition attributes can also contain element references; but, they will always
+        // be references to DmeParticleOperator elements. DmeParticleOperator are always leaf nodes in the DAG.
+
+        let mut particle_systems: Vec<ParticleSystem> = Vec::new();
+
+        for (system_idx, _) in &system_indices {
+            let element = value
+                .elements
+                .get(usize::from(*system_idx))
+                .ok_or(Error::MissingParticleSystem(*system_idx))?;
+
+            if element.type_idx != symbols.particle_system_definition {
+                return Err(Error::InvalidParticleSystem(*system_idx));
+            }
+
+            let name = element.name.to_string_lossy().into_owned();
+            let signature = element.signature;
+
+            let mut children: Vec<Child> = Vec::new();
+            let mut constraints: Vec<Operator> = Vec::new();
+            let mut emitters: Vec<Operator> = Vec::new();
+            let mut forces: Vec<Operator> = Vec::new();
+            let mut initializers: Vec<Operator> = Vec::new();
+            let mut operators: Vec<Operator> = Vec::new();
+            let mut renderers: Vec<Operator> = Vec::new();
+            let mut attributes = OrderMap::new();
+
+            for (name_idx, attribute) in &element.attributes {
+                if let dmx::attribute::Attribute::ElementArray(element_indices) = attribute {
+                    if *name_idx == symbols.children {
+                        for child_element_idx in element_indices {
+                            let child_element = value
+                                .elements
+                                .get(usize::from(*child_element_idx))
+                                .ok_or(Error::MissingParticleChild(*child_element_idx))?;
+
+                            if child_element.type_idx != symbols.particle_child {
+                                return Err(Error::InvalidParticleChild(*child_element_idx));
+                            }
+
+                            let child_attribute = child_element
+                                .attributes
+                                .get(&symbols.child)
+                                .ok_or(Error::MissingChild)?;
+                            let dmx::attribute::Attribute::Element(child_system_idx) = child_attribute else {
+                                return Err(Error::MissingChild);
+                            };
+
+                            let mut attributes = OrderMap::new();
+                            for (name_idx, attribute) in &child_element.attributes {
+                                if *name_idx == symbols.child {
+                                    continue;
+                                }
+
+                                attributes.insert(*name_idx, attribute.try_into()?);
+                            }
+
+                            let name = child_element.name.to_string_lossy().into_owned();
+                            let signature = child_element.signature;
+                            children.push(Child {
+                                name,
+                                signature,
+                                attributes,
+                                child: *system_indices
+                                    .get(child_system_idx)
+                                    .expect("this relationship should always be valid"),
+                            });
+                        }
+                        continue;
+                    }
+
+                    let operators = if *name_idx == symbols.constraints {
+                        &mut constraints
+                    } else if *name_idx == symbols.emitters {
+                        &mut emitters
+                    } else if *name_idx == symbols.forces {
+                        &mut forces
+                    } else if *name_idx == symbols.initializers {
+                        &mut initializers
+                    } else if *name_idx == symbols.operators {
+                        &mut operators
+                    } else if *name_idx == symbols.renderers {
+                        &mut renderers
+                    } else {
+                        return Err(Error::UnexpectedElementReference);
+                    };
+
+                    for element_idx in element_indices {
+                        let element = value
+                            .elements
+                            .get(usize::from(*element_idx))
+                            .ok_or(Error::MissingOperator(*element_idx))?;
+
+                        if element.type_idx != symbols.particle_operator {
+                            return Err(Error::InvalidParticleOperator(*element_idx));
+                        }
+
+                        operators.push(Operator::try_from(element, &symbols)?);
+                    }
+                } else {
+                    attributes.insert(*name_idx, attribute.try_into()?);
+                }
+            }
+
+            particle_systems.push(ParticleSystem {
+                id: *system_idx,
+                name,
+                signature,
+                children: children.into_boxed_slice(),
+                constraints: constraints.into_boxed_slice(),
+                emitters: emitters.into_boxed_slice(),
+                forces: forces.into_boxed_slice(),
+                initializers: initializers.into_boxed_slice(),
+                operators: operators.into_boxed_slice(),
+                renderers: renderers.into_boxed_slice(),
+                attributes,
+            });
+        }
+
+        let mut attributes = OrderMap::new();
+        for (name_idx, attribute) in &root_element.attributes {
+            if *name_idx == symbols.particle_system_definitions {
+                continue;
+            }
+
+            attributes.insert(*name_idx, attribute.try_into()?);
+        }
+
+        let root = Root {
+            name: root_element.name.to_string_lossy().into_owned(),
+            signature: root_element.signature,
+            particle_systems: particle_systems.into_boxed_slice(),
+            attributes,
+        };
+
+        Ok(Self {
+            version: value.version,
+            symbols,
+            root,
+        })
+    }
+}
+
+impl From<Pcf> for Dmx {
+    fn from(value: Pcf) -> Self {
+        fn push_operators(
+            operators: Box<[Operator]>,
+            elements: &mut Vec<Element>,
+            indices: &mut Vec<ElementIdx>,
+            symbols: &Symbols
+        ) {
+            for operator in operators {
+                indices.push(ElementIdx::from(elements.len()));
+
+                let mut attributes  = attribute_map_to_dmx_map(operator.attributes);
+                attributes.insert(symbols.function_name, string_to_cstring(operator.function_name).into());
+
+                elements.push(Element {
+                    type_idx: symbols.particle_operator,
+                    name: string_to_cstring(operator.name),
+                    signature: operator.signature,
+                    attributes,
+                })
+            }
+        }
+
+        fn push_index_attribute(
+            indices: Vec<ElementIdx>,
+            attributes: &mut OrderMap<SymbolIdx, dmx::attribute::Attribute>,
+            symbols: &Symbols,
+        ) {
+            if !indices.is_empty() {
+                attributes.insert(
+                    symbols.children,
+                    indices.into_boxed_slice().into(),
+                );
+            }
+        }
+
+        let mut root_attributes = attribute_map_to_dmx_map(value.root.attributes);
+        let particle_system_definitions: Box<_> = (0..value.root.particle_systems.len())
+            .map(|idx| ElementIdx::from(idx))
+            .collect();
+
+        root_attributes.insert(
+            value.symbols.particle_system_definitions,
+            particle_system_definitions.into(),
+        );
+
+        let root_element = Element {
+            type_idx: value.symbols.element,
+            name: string_to_cstring(value.root.name),
+            signature: value.root.signature,
+            attributes: root_attributes,
+        };
+
+        let mut elements = vec![root_element];
+        for particle_system in &value.root.particle_systems {
+            elements.push(Element {
+                type_idx: value.symbols.particle_system_definition,
+                name: str_to_cstring(&particle_system.name),
+                signature: particle_system.signature,
+                attributes: OrderMap::new(),
+            })
+        }
+
+        for (system_idx, particle_system) in value.root.particle_systems.into_iter().enumerate() {
+            let mut child_indices = Vec::new();
+            let mut constraint_indices = Vec::new();
+            let mut emitter_indices = Vec::new();
+            let mut force_indices = Vec::new();
+            let mut initializer_indices = Vec::new();
+            let mut operator_indices = Vec::new();
+            let mut renderer_indices = Vec::new();
+
+            for child in particle_system.children {
+                child_indices.push(ElementIdx::from(elements.len()));
+
+                let mut attributes = attribute_map_to_dmx_map(child.attributes);
+
+                // child.child indexes into value.root.particle_systems, but we insert particle system defintiions
+                // into `elements` before any others, so this index is still correct in our new elements list
+                // except we have to offset by 1 to account for the root element we add earlier.
+                attributes.insert(value.symbols.child, dmx::attribute::Attribute::Element(child.child + 1));
+
+                elements.push(Element {
+                    type_idx: value.symbols.particle_child,
+                    name: string_to_cstring(child.name),
+                    signature: child.signature,
+                    attributes,
+                })
+            }
+
+            push_operators(particle_system.constraints, &mut elements, &mut constraint_indices, &value.symbols);
+            push_operators(particle_system.emitters, &mut elements, &mut emitter_indices, &value.symbols);
+            push_operators(particle_system.forces, &mut elements, &mut force_indices, &value.symbols);
+            push_operators(particle_system.initializers, &mut elements, &mut initializer_indices, &value.symbols);
+            push_operators(particle_system.operators, &mut elements, &mut operator_indices, &value.symbols);
+            push_operators(particle_system.renderers, &mut elements, &mut renderer_indices, &value.symbols);
+
+            let mut new_attributes = attribute_map_to_dmx_map(particle_system.attributes);
+
+            push_index_attribute(child_indices, &mut new_attributes, &value.symbols);
+            push_index_attribute(constraint_indices, &mut new_attributes, &value.symbols);
+            push_index_attribute(emitter_indices, &mut new_attributes, &value.symbols);
+            push_index_attribute(force_indices, &mut new_attributes, &value.symbols);
+            push_index_attribute(initializer_indices, &mut new_attributes, &value.symbols);
+            push_index_attribute(operator_indices, &mut new_attributes, &value.symbols);
+            push_index_attribute(renderer_indices, &mut new_attributes, &value.symbols);
+
+            elements[system_idx].attributes = new_attributes;
+        }
+
+        Self {
+            version: value.version,
+            strings: value.symbols.into(),
+            elements,
+        }
+    }
+}
+
+fn string_to_cstring(string: String) -> CString {
+    let mut vec: Vec<u8> = string.into_bytes();
+    vec.push(0);
+    CString::from_vec_with_nul(vec).expect("this should never fail")
+}
+
+fn str_to_cstring(string: &str) -> CString {
+    CString::new(string).expect("this should never fail")
+}
+
+fn attribute_map_to_dmx_map(map: OrderMap<SymbolIdx, Attribute>) -> OrderMap<SymbolIdx, dmx::attribute::Attribute> {
+    map.into_iter()
+        .map(|(name_idx, attribute)| (name_idx, dmx::attribute::Attribute::from(attribute)))
+        .collect()
+}
+
+#[derive(Debug)]
+pub struct Child {
+    pub name: String,
+    pub signature: Signature,
+    pub child: ElementIdx,
+    pub attributes: OrderMap<SymbolIdx, Attribute>,
+}
+
+#[derive(Debug)]
+pub struct ParticleSystem {
+    pub id: ElementIdx,
+    pub name: String,
+    pub signature: Signature,
+    pub children: Box<[Child]>,
+    pub constraints: Box<[Operator]>,
+    pub emitters: Box<[Operator]>,
+    pub forces: Box<[Operator]>,
+    pub initializers: Box<[Operator]>,
+    pub operators: Box<[Operator]>,
+    pub renderers: Box<[Operator]>,
+    pub attributes: OrderMap<SymbolIdx, Attribute>,
+}
+
+#[derive(Debug)]
+pub struct Operator {
+    pub name: String,
+    pub function_name: String,
+    pub signature: Signature,
+    pub attributes: OrderMap<SymbolIdx, Attribute>,
+}
+
+impl Operator {
+    fn try_from(element: &Element, symbols: &Symbols) -> Result<Self, Error> {
+        let function_name = element
+            .attributes
+            .get(&symbols.function_name)
+            .ok_or(Error::MissingFunctionName)?;
+
+        let dmx::attribute::Attribute::String(function_name) = function_name else {
+            return Err(Error::MissingFunctionName);
+        };
+
+        let mut attributes: OrderMap<SymbolIdx, Attribute> = OrderMap::new();
+        for (name_idx, attribute) in &element.attributes {
+            if *name_idx == symbols.function_name {
+                continue;
+            }
+
+            attributes.insert(*name_idx, attribute.try_into()?);
+        }
+
+        Ok(Self {
+            name: element.name.to_string_lossy().into_owned(),
+            function_name: function_name.to_string_lossy().into_owned(),
+            signature: element.signature,
+            attributes,
+        })
+    }
+}
+
+#[derive(Debug, From)]
+pub enum Attribute {
+    Integer(i32),
+    Float(Float),
+    Bool(bool),
+    String(String),
+    Binary(Box<[u8]>),
+    Color(Color),
+    Vector2(Vector2),
+    Vector3(Vector3),
+    Vector4(Vector4),
+    Matrix(Matrix),
+    IntegerArray(Box<[i32]>),
+    FloatArray(Box<[Float]>),
+    BoolArray(Box<[Bool8]>),
+    StringArray(Box<[String]>),
+    BinaryArray(Box<[Box<[u8]>]>),
+    ColorArray(Box<[Color]>),
+    Vector2Array(Box<[Vector2]>),
+    Vector3Array(Box<[Vector3]>),
+    Vector4Array(Box<[Vector4]>),
+    MatrixArray(Box<[Matrix]>),
+}
+
+impl TryFrom<&dmx::attribute::Attribute> for Attribute {
+    type Error = Error;
+
+    fn try_from(value: &dmx::attribute::Attribute) -> Result<Self, Self::Error> {
+        match value {
+            dmx::attribute::Attribute::Element(_) => Err(Error::UnexpectedElementReference),
+            dmx::attribute::Attribute::Integer(value) => Ok((*value).into()),
+            dmx::attribute::Attribute::Float(value) => Ok((*value).into()),
+            dmx::attribute::Attribute::Bool(value) => Ok(bool::from(*value).into()),
+            dmx::attribute::Attribute::String(value) => Ok(value.to_string_lossy().into_owned().into()),
+            dmx::attribute::Attribute::Binary(value) => Ok(value.clone().into()),
+            dmx::attribute::Attribute::Color(value) => Ok((*value).into()),
+            dmx::attribute::Attribute::Vector2(value) => Ok((*value).into()),
+            dmx::attribute::Attribute::Vector3(value) => Ok((*value).into()),
+            dmx::attribute::Attribute::Vector4(value) => Ok((*value).into()),
+            dmx::attribute::Attribute::Matrix(value) => Ok((*value).into()),
+            dmx::attribute::Attribute::ElementArray(_) => Err(Error::UnexpectedElementReference),
+            dmx::attribute::Attribute::IntegerArray(value) => Ok(value.clone().into()),
+            dmx::attribute::Attribute::FloatArray(value) => Ok(value.clone().into()),
+            dmx::attribute::Attribute::BoolArray(value) => Ok(value.clone().into()),
+            dmx::attribute::Attribute::StringArray(value) => Ok(value
+                .into_iter()
+                .map(|string| string.to_string_lossy().into_owned())
+                .collect::<Box<[String]>>()
+                .into()),
+            dmx::attribute::Attribute::BinaryArray(value) => Ok(value.clone().into()),
+            dmx::attribute::Attribute::ColorArray(value) => Ok(value.clone().into()),
+            dmx::attribute::Attribute::Vector2Array(value) => Ok(value.clone().into()),
+            dmx::attribute::Attribute::Vector3Array(value) => Ok(value.clone().into()),
+            dmx::attribute::Attribute::Vector4Array(value) => Ok(value.clone().into()),
+            dmx::attribute::Attribute::MatrixArray(value) => Ok(value.clone().into()),
+        }
+    }
+}
+
+impl From<Attribute> for dmx::attribute::Attribute {
+    fn from(value: Attribute) -> Self {
+        match value {
+            Attribute::Integer(value) => value.into(),
+            Attribute::Float(value) => value.into(),
+            Attribute::Bool(value) => value.into(),
+            Attribute::String(value) => string_to_cstring(value).into(),
+            Attribute::Binary(value) => value.into(),
+            Attribute::Color(value) => value.into(),
+            Attribute::Vector2(value) => value.into(),
+            Attribute::Vector3(value) => value.into(),
+            Attribute::Vector4(value) => value.into(),
+            Attribute::Matrix(value) => value.into(),
+            Attribute::IntegerArray(value) => value.into(),
+            Attribute::FloatArray(value) => value.into(),
+            Attribute::BoolArray(value) => value.into(),
+            Attribute::StringArray(value) => value
+                .into_iter()
+                .map(string_to_cstring)
+                .collect::<Box<[CString]>>()
+                .into(),
+            Attribute::BinaryArray(value) => value.into(),
+            Attribute::ColorArray(value) => value.into(),
+            Attribute::Vector2Array(value) => value.into(),
+            Attribute::Vector3Array(value) => value.into(),
+            Attribute::Vector4Array(value) => value.into(),
+            Attribute::MatrixArray(value) => value.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Symbols {
+    pub element: SymbolIdx,
+    pub particle_system_definitions: SymbolIdx,
+    pub particle_system_definition: SymbolIdx,
+    pub particle_child: SymbolIdx,
+    pub particle_operator: SymbolIdx,
+    pub function_name: SymbolIdx,
+    pub children: SymbolIdx,
+    pub constraints: SymbolIdx,
+    pub emitters: SymbolIdx,
+    pub forces: SymbolIdx,
+    pub initializers: SymbolIdx,
+    pub operators: SymbolIdx,
+    pub renderers: SymbolIdx,
+    pub child: SymbolIdx,
+    pub base: OrderSet<String>,
+}
+
+impl TryFrom<dmx::Symbols> for Symbols {
+    type Error = Error;
+
+    fn try_from(base: dmx::Symbols) -> Result<Self, Self::Error> {
+        fn idx_or_max(from: &dmx::Symbols, value: &CStr) -> SymbolIdx {
+            from.iter()
+                .find_position(|el| *el == value)
+                .map(|(idx, _)| idx as SymbolIdx)
+                .unwrap_or(SymbolIdx::MAX)
+        }
+
+        let element = base
+            .iter()
+            .find_position(|el| *el == c"DmElement")
+            .ok_or(Error::MissingDatamodelElementString)?
+            .0 as SymbolIdx;
+
+        let particle_system_definitions = base
+            .iter()
+            .find_position(|el| *el == c"particleSystemDefinitions")
+            .ok_or(Error::MissingRootDefinitionString)?
+            .0 as SymbolIdx;
+
+        let particle_system_definition = base
+            .iter()
+            .find_position(|el| *el == c"DmeParticleSystemDefinition")
+            .ok_or(Error::MissingSystemDefinitionString)?
+            .0 as SymbolIdx;
+
+        let particle_child = idx_or_max(&base, c"DmeParticleChild");
+        let particle_operator = idx_or_max(&base, c"DmeParticleOperator");
+        let function_name = idx_or_max(&base, c"functionName");
+        let children = idx_or_max(&base, c"children");
+        let constraints = idx_or_max(&base, c"constraints");
+        let emitters = idx_or_max(&base, c"emitters");
+        let forces = idx_or_max(&base, c"forces");
+        let initializers = idx_or_max(&base, c"initializers");
+        let operators = idx_or_max(&base, c"operators");
+        let renderers = idx_or_max(&base, c"renderers");
+        let child = idx_or_max(&base, c"child");
+
+        let base = base
+            .into_iter()
+            .map(|string| string.to_string_lossy().into_owned())
+            .collect();
+
+        Ok(Self {
+            element,
+            particle_system_definitions,
+            particle_system_definition,
+            particle_child,
+            particle_operator,
+            function_name,
+            children,
+            constraints,
+            emitters,
+            forces,
+            initializers,
+            operators,
+            renderers,
+            child,
+            base,
+        })
+    }
+}
+
+impl From<Symbols> for dmx::Symbols {
+    fn from(value: Symbols) -> Self {
+        value
+            .base
+            .into_iter()
+            .map(|string| {
+                let mut vec: Vec<u8> = string.into_bytes();
+                vec.push(0);
+                CString::from_vec_with_nul(vec).expect("this should never fail")
+            })
+            .collect()
+    }
+}
