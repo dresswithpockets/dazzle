@@ -377,33 +377,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "display_tree"
-version = "1.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee681da17a6049f8d824e3e74e7131f09712f823fc4577c5667cd8a2527f783a"
-dependencies = [
- "display_tree_derive",
-]
-
-[[package]]
-name = "display_tree_derive"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4d471d0edd933f0e5de085bf68c8525aea536dba512dcc07c98a7b7c0614af2"
-dependencies = [
- "proc-macro-error",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "dlv-list"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "442039f5147480ba31067cb00ada1adae6892028e40e45fc5de7b7df6dcc1b5f"
 dependencies = [
  "const-random",
+]
+
+[[package]]
+name = "dmx"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "bytes",
+ "derive_more",
+ "either",
+ "itertools",
+ "nanoserde",
+ "ordered-float 5.1.0",
+ "ordermap",
+ "thiserror 2.0.17",
+ "type-state-builder",
 ]
 
 [[package]]
@@ -736,8 +732,10 @@ dependencies = [
  "byteorder",
  "bytes",
  "derive_more",
+ "dmx",
  "either",
  "itertools",
+ "nanoserde",
  "ordered-float 5.1.0",
  "ordermap",
  "thiserror 2.0.17",
@@ -748,7 +746,6 @@ dependencies = [
 name = "pcftree"
 version = "0.1.0"
 dependencies = [
- "display_tree",
  "hex_fmt",
  "pcf",
  "ptree",
@@ -805,30 +802,6 @@ checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
 dependencies = [
  "fixedbitset",
  "indexmap",
-]
-
-[[package]]
-name = "proc-macro-error"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c"
-dependencies = [
- "proc-macro-error-attr",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
- "version_check",
-]
-
-[[package]]
-name = "proc-macro-error-attr"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869"
-dependencies = [
- "proc-macro2",
- "quote",
- "version_check",
 ]
 
 [[package]]

@@ -7,7 +7,7 @@ license = "Apache-2.0"
 
 [workspace]
 default-members = [ ".", ]
-members = [ ".", "pcf", "nanoserde" , "tools/pcftree"]
+members = [ ".", "dmx", "pcf", "nanoserde" , "tools/pcftree"]
 
 [features]
 default = []
