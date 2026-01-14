@@ -1,6 +1,7 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::{CStr, CString},
+    mem,
 };
 
 use derive_more::From;
@@ -79,6 +80,314 @@ pub enum Error {
     MissingSystemDefinitionString,
 }
 
+impl Pcf {
+    /// Consumes the [`Pcf`], splitting it up into multiple [`Pcf`]s. Each [`Pcf`] will only contain
+    /// [`ParticleSystem`]s that are connected (such as by a via [`Child`] link).
+    ///
+    /// Each [`ParticleSystem`] from the original [`Pcf`] will only show up once.
+    ///
+    /// Unused symbols are also stripped from each [`Pcf`], to ensure it only contains the bare minimum necessary to be
+    /// a valid [`Pcf`].
+    pub fn into_connected_pcfs(self) -> Vec<Self> {
+        let mut groups = Vec::new();
+        let mut system_to_group_idx: HashMap<ElementIdx, usize> = HashMap::new();
+
+        for (system_idx, particle_system) in self.root.particle_systems.into_iter().enumerate() {
+            let related_groups: Vec<_> = particle_system
+                .children
+                .iter()
+                .filter_map(|child| {
+                    system_to_group_idx
+                        .get(&child.child)
+                        .map(|group_idx| (child.child, *group_idx))
+                })
+                .collect();
+
+            if related_groups.is_empty() {
+                // there are no related groups, so we don't need to merge anything, and should create a new group
+                system_to_group_idx.insert(system_idx.into(), groups.len());
+                groups.push(vec![(system_idx, particle_system)]);
+            } else {
+                // we've got some related groups, so we need to merge them all together, and add our particle system to the group
+                let (indices_to_remap, group_indices): (Vec<_>, Vec<_>) = related_groups.into_iter().unzip();
+
+                let mut groups_to_merge = Vec::with_capacity(group_indices.len() + 1);
+                groups_to_merge.push(vec![(system_idx, particle_system)]);
+                for group_idx in group_indices {
+                    groups_to_merge.push(groups.remove(group_idx));
+                }
+
+                for idx_to_remap in indices_to_remap {
+                    system_to_group_idx.insert(idx_to_remap, groups.len());
+                }
+
+                groups.push(groups_to_merge.into_iter().concat());
+            }
+        }
+
+        // at this point each group should only contain related particle systems. Now we need to fix child indices
+        for group in &mut groups {
+            let (old_to_new_idx, mut particle_systems): (HashMap<_, _>, Vec<_>) = group
+                .iter_mut()
+                .enumerate()
+                .map(|(new_idx, (old_idx, particle_system))| {
+                    ((ElementIdx::from(*old_idx), ElementIdx::from(new_idx)), particle_system)
+                })
+                .unzip();
+
+            for particle_system in &mut particle_systems {
+                for child in &mut particle_system.children {
+                    child.child = *old_to_new_idx
+                        .get(&child.child)
+                        .expect("old indices should always be in the old_to_new_idx map")
+                }
+            }
+        }
+
+        groups
+            .into_iter()
+            .map(|group| {
+                let pcf = Pcf {
+                    version: self.version,
+                    symbols: self.symbols.clone(),
+                    root: Root {
+                        name: self.root.name.clone(),
+                        signature: self.root.signature,
+                        particle_systems: group.into_iter().map(|(_, system)| system).collect(),
+                        attributes: self.root.attributes.clone(),
+                    },
+                };
+
+                pcf.strip_unused_symbols()
+            })
+            .collect()
+    }
+
+    /// Consumes the [`Pcf`], returning a new [`Pcf`] with all unused symbols removed. References to symbols are
+    /// replaced with the new index for each symbol.
+    pub fn strip_unused_symbols(mut self) -> Self {
+        // these symbols are always required
+        let mut used_symbols = HashSet::from([
+            self.symbols.element,
+            self.symbols.particle_system_definitions,
+            self.symbols.particle_system_definition,
+        ]);
+
+        for (name_idx, _) in &self.root.attributes {
+            used_symbols.insert(*name_idx);
+        }
+
+        let mut has_child = false;
+        let mut has_constraint = false;
+        let mut has_emitter = false;
+        let mut has_force = false;
+        let mut has_initializer = false;
+        let mut has_operator = false;
+        let mut has_renderer = false;
+
+        for system in &self.root.particle_systems {
+            for (name_idx, _) in &system.attributes {
+                used_symbols.insert(*name_idx);
+            }
+
+            if !system.children.is_empty() {
+                has_child = true;
+                for child in &system.children {
+                    for (name_idx, _) in &child.attributes {
+                        used_symbols.insert(*name_idx);
+                    }
+                }
+            }
+
+            if !system.constraints.is_empty() {
+                has_constraint = true;
+                for operator in &system.constraints {
+                    for (name_idx, _) in &operator.attributes {
+                        used_symbols.insert(*name_idx);
+                    }
+                }
+            }
+
+            if !system.emitters.is_empty() {
+                has_emitter = true;
+                for operator in &system.emitters {
+                    for (name_idx, _) in &operator.attributes {
+                        used_symbols.insert(*name_idx);
+                    }
+                }
+            }
+
+            if !system.forces.is_empty() {
+                has_force = true;
+                for operator in &system.forces {
+                    for (name_idx, _) in &operator.attributes {
+                        used_symbols.insert(*name_idx);
+                    }
+                }
+            }
+
+            if !system.initializers.is_empty() {
+                has_initializer = true;
+                for operator in &system.initializers {
+                    for (name_idx, _) in &operator.attributes {
+                        used_symbols.insert(*name_idx);
+                    }
+                }
+            }
+
+            if !system.operators.is_empty() {
+                has_operator = true;
+                for operator in &system.operators {
+                    for (name_idx, _) in &operator.attributes {
+                        used_symbols.insert(*name_idx);
+                    }
+                }
+            }
+
+            if !system.renderers.is_empty() {
+                has_renderer = true;
+                for operator in &system.renderers {
+                    for (name_idx, _) in &operator.attributes {
+                        used_symbols.insert(*name_idx);
+                    }
+                }
+            }
+        }
+
+        if has_child {
+            used_symbols.insert(self.symbols.child);
+            used_symbols.insert(self.symbols.particle_child);
+            used_symbols.insert(self.symbols.children);
+        }
+
+        if has_constraint || has_emitter || has_force || has_initializer || has_operator || has_renderer {
+            used_symbols.insert(self.symbols.particle_operator);
+            used_symbols.insert(self.symbols.function_name);
+        }
+
+        if has_constraint {
+            used_symbols.insert(self.symbols.operators);
+        }
+
+        if has_emitter {
+            used_symbols.insert(self.symbols.emitters);
+        }
+
+        if has_emitter {
+            used_symbols.insert(self.symbols.forces);
+        }
+
+        if has_emitter {
+            used_symbols.insert(self.symbols.initializers);
+        }
+
+        if has_emitter {
+            used_symbols.insert(self.symbols.operators);
+        }
+
+        if has_emitter {
+            used_symbols.insert(self.symbols.renderers);
+        }
+
+        let old_symbols = mem::replace(&mut self.symbols.base, OrderSet::new());
+
+        let mut old_to_new_idx: HashMap<SymbolIdx, SymbolIdx> = HashMap::new();
+        let mut running_offset = 0;
+        for (idx, symbol) in old_symbols.into_iter().enumerate() {
+            let idx = idx as SymbolIdx;
+            if !used_symbols.contains(&idx) {
+                running_offset += 1;
+                continue;
+            }
+
+            old_to_new_idx.insert(idx, idx - running_offset);
+            self.symbols.base.insert(symbol);
+        }
+
+        fn remap_attributes(
+            old_to_new_idx: &HashMap<u16, u16>,
+            attributes: OrderMap<SymbolIdx, Attribute>,
+        ) -> OrderMap<SymbolIdx, Attribute> {
+            attributes
+                .into_iter()
+                .map(|(name_idx, attribute)| {
+                    let new_name_idx = *old_to_new_idx
+                        .get(&name_idx)
+                        .expect("old name indices should always be present in the map");
+
+                    (new_name_idx, attribute)
+                })
+                .collect()
+        }
+
+        fn remap_operators(old_to_new_idx: &HashMap<u16, u16>, operators: &mut Box<[Operator]>) {
+            for operator in operators {
+                let attributes = mem::take(&mut operator.attributes);
+                operator.attributes = remap_attributes(old_to_new_idx, attributes);
+            }
+        }
+
+        self.root.attributes = remap_attributes(&old_to_new_idx, self.root.attributes);
+        self.root.particle_systems = self
+            .root
+            .particle_systems
+            .into_iter()
+            .map(|mut particle_system| {
+                particle_system.attributes = remap_attributes(&old_to_new_idx, particle_system.attributes);
+
+                particle_system.children = particle_system
+                    .children
+                    .into_iter()
+                    .map(|mut child| {
+                        child.attributes = remap_attributes(&old_to_new_idx, child.attributes);
+                        child
+                    })
+                    .collect();
+
+                remap_operators(&old_to_new_idx, &mut particle_system.constraints);
+                remap_operators(&old_to_new_idx, &mut particle_system.emitters);
+                remap_operators(&old_to_new_idx, &mut particle_system.forces);
+                remap_operators(&old_to_new_idx, &mut particle_system.initializers);
+                remap_operators(&old_to_new_idx, &mut particle_system.renderers);
+                remap_operators(&old_to_new_idx, &mut particle_system.operators);
+
+                particle_system
+            })
+            .collect();
+
+        self.symbols.element = *old_to_new_idx
+            .get(&self.symbols.element)
+            .expect("this should always be present in the map");
+        self.symbols.particle_system_definitions = *old_to_new_idx
+            .get(&self.symbols.particle_system_definitions)
+            .expect("this should always be present in the map");
+        self.symbols.particle_system_definition = *old_to_new_idx
+            .get(&self.symbols.particle_system_definition)
+            .expect("this should always be present in the map");
+        self.symbols.particle_child = *old_to_new_idx
+            .get(&self.symbols.particle_child)
+            .unwrap_or(&SymbolIdx::MAX);
+        self.symbols.particle_operator = *old_to_new_idx
+            .get(&self.symbols.particle_operator)
+            .unwrap_or(&SymbolIdx::MAX);
+        self.symbols.function_name = *old_to_new_idx
+            .get(&self.symbols.function_name)
+            .unwrap_or(&SymbolIdx::MAX);
+        self.symbols.children = *old_to_new_idx.get(&self.symbols.children).unwrap_or(&SymbolIdx::MAX);
+        self.symbols.constraints = *old_to_new_idx.get(&self.symbols.constraints).unwrap_or(&SymbolIdx::MAX);
+        self.symbols.emitters = *old_to_new_idx.get(&self.symbols.emitters).unwrap_or(&SymbolIdx::MAX);
+        self.symbols.forces = *old_to_new_idx.get(&self.symbols.forces).unwrap_or(&SymbolIdx::MAX);
+        self.symbols.initializers = *old_to_new_idx
+            .get(&self.symbols.initializers)
+            .unwrap_or(&SymbolIdx::MAX);
+        self.symbols.operators = *old_to_new_idx.get(&self.symbols.operators).unwrap_or(&SymbolIdx::MAX);
+        self.symbols.renderers = *old_to_new_idx.get(&self.symbols.renderers).unwrap_or(&SymbolIdx::MAX);
+        self.symbols.child = *old_to_new_idx.get(&self.symbols.child).unwrap_or(&SymbolIdx::MAX);
+
+        self
+    }
+}
+
 impl TryFrom<Dmx> for Pcf {
     type Error = Error;
 
@@ -116,7 +425,7 @@ impl TryFrom<Dmx> for Pcf {
 
         let mut particle_systems: Vec<ParticleSystem> = Vec::new();
 
-        for (system_idx, _) in &system_indices {
+        for system_idx in system_indices.keys() {
             let element = value
                 .elements
                 .get(usize::from(*system_idx))
@@ -216,7 +525,6 @@ impl TryFrom<Dmx> for Pcf {
             }
 
             particle_systems.push(ParticleSystem {
-                id: *system_idx,
                 name,
                 signature,
                 children: children.into_boxed_slice(),
@@ -260,12 +568,12 @@ impl From<Pcf> for Dmx {
             operators: Box<[Operator]>,
             elements: &mut Vec<Element>,
             indices: &mut Vec<ElementIdx>,
-            symbols: &Symbols
+            symbols: &Symbols,
         ) {
             for operator in operators {
                 indices.push(ElementIdx::from(elements.len()));
 
-                let mut attributes  = attribute_map_to_dmx_map(operator.attributes);
+                let mut attributes = attribute_map_to_dmx_map(operator.attributes);
                 attributes.insert(symbols.function_name, string_to_cstring(operator.function_name).into());
 
                 elements.push(Element {
@@ -283,17 +591,13 @@ impl From<Pcf> for Dmx {
             symbols: &Symbols,
         ) {
             if !indices.is_empty() {
-                attributes.insert(
-                    symbols.children,
-                    indices.into_boxed_slice().into(),
-                );
+                attributes.insert(symbols.children, indices.into_boxed_slice().into());
             }
         }
 
         let mut root_attributes = attribute_map_to_dmx_map(value.root.attributes);
-        let particle_system_definitions: Box<_> = (0..value.root.particle_systems.len())
-            .map(|idx| ElementIdx::from(idx))
-            .collect();
+        let particle_system_definitions: Box<_> =
+            (0..value.root.particle_systems.len()).map(ElementIdx::from).collect();
 
         root_attributes.insert(
             value.symbols.particle_system_definitions,
@@ -344,12 +648,42 @@ impl From<Pcf> for Dmx {
                 })
             }
 
-            push_operators(particle_system.constraints, &mut elements, &mut constraint_indices, &value.symbols);
-            push_operators(particle_system.emitters, &mut elements, &mut emitter_indices, &value.symbols);
-            push_operators(particle_system.forces, &mut elements, &mut force_indices, &value.symbols);
-            push_operators(particle_system.initializers, &mut elements, &mut initializer_indices, &value.symbols);
-            push_operators(particle_system.operators, &mut elements, &mut operator_indices, &value.symbols);
-            push_operators(particle_system.renderers, &mut elements, &mut renderer_indices, &value.symbols);
+            push_operators(
+                particle_system.constraints,
+                &mut elements,
+                &mut constraint_indices,
+                &value.symbols,
+            );
+            push_operators(
+                particle_system.emitters,
+                &mut elements,
+                &mut emitter_indices,
+                &value.symbols,
+            );
+            push_operators(
+                particle_system.forces,
+                &mut elements,
+                &mut force_indices,
+                &value.symbols,
+            );
+            push_operators(
+                particle_system.initializers,
+                &mut elements,
+                &mut initializer_indices,
+                &value.symbols,
+            );
+            push_operators(
+                particle_system.operators,
+                &mut elements,
+                &mut operator_indices,
+                &value.symbols,
+            );
+            push_operators(
+                particle_system.renderers,
+                &mut elements,
+                &mut renderer_indices,
+                &value.symbols,
+            );
 
             let mut new_attributes = attribute_map_to_dmx_map(particle_system.attributes);
 
@@ -398,7 +732,6 @@ pub struct Child {
 
 #[derive(Debug)]
 pub struct ParticleSystem {
-    pub id: ElementIdx,
     pub name: String,
     pub signature: Signature,
     pub children: Box<[Child]>,
@@ -448,7 +781,7 @@ impl Operator {
     }
 }
 
-#[derive(Debug, From)]
+#[derive(Debug, From, Clone)]
 pub enum Attribute {
     Integer(i32),
     Float(Float),
