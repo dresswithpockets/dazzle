@@ -1,5 +1,9 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet}, ffi::{CStr, CString}, fmt::Display, marker::PhantomData, thread::current, vec
+    collections::{BTreeMap, HashMap, HashSet},
+    ffi::{CStr, CString},
+    fmt::Display,
+    marker::PhantomData,
+    vec,
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -7,7 +11,13 @@ use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
 use thiserror::Error;
 
-use crate::{attribute::{self, Attribute, AttributeReader, AttributeWriter, Bool8, Color, Float, Matrix, NameIndex, Vector2, Vector3, Vector4}, index::ElementIdx};
+use crate::{
+    attribute::{
+        self, Attribute, AttributeReader, AttributeWriter, Bool8, Color, Float, Matrix, NameIndex, Vector2, Vector3,
+        Vector4,
+    },
+    index::ElementIdx,
+};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum Version {
@@ -86,7 +96,7 @@ pub trait ElementsExt<'a>: Iterator<Item = &'a Element> + Sized {
 
 impl<'a, T: Iterator<Item = &'a Element> + Sized> ElementsExt<'a> for T {}
 
-type Signature = [u8; 16];
+pub type Signature = [u8; 16];
 
 #[derive(Debug, Clone, Default)]
 pub struct Root {
@@ -128,7 +138,10 @@ impl Symbols {
     }
 
     pub fn find_index(&self, string: &CStr) -> Option<NameIndex> {
-        self.base.iter().position(|el| el.0 == string).map(|result| result as NameIndex)
+        self.base
+            .iter()
+            .position(|el| el.0 == string)
+            .map(|result| result as NameIndex)
     }
 
     pub fn get_index(&self, idx: usize) -> Option<(&CString, &())> {
@@ -153,7 +166,7 @@ impl Symbols {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    
+
     pub fn get_name(&self, name_idx: u16) -> Option<&CString> {
         self.get_index(name_idx as usize).map(|el| el.0)
     }
@@ -252,7 +265,6 @@ pub enum PushParticleSystemError {
     NonParticleSystemDefinitionElement,
 }
 
-
 impl Pcf {
     pub fn version(&self) -> Version {
         self.version
@@ -304,7 +316,7 @@ impl Pcf {
                     Attribute::Element(value) => {
                         if !value.is_valid() {
                             eprintln!("attribute has ElementIdx::INVALID value");
-                            continue
+                            continue;
                         }
 
                         visit(pcf, visited, *value);
@@ -489,12 +501,7 @@ impl Pcf {
                 .attributes
                 .into_iter()
                 .map(|(name_idx, attribute)| {
-                    Self::reindex_other_attribute(
-                        element_offset,
-                        &other_to_new_string_idx,
-                        name_idx,
-                        attribute,
-                    )
+                    Self::reindex_other_attribute(element_offset, &other_to_new_string_idx, name_idx, attribute)
                 })
                 .collect();
 
@@ -554,9 +561,7 @@ impl Pcf {
             .expect("the attribute's name_idx should always match a value in the Pcf's string list");
 
         let attribute = match attribute {
-            Attribute::Element(value) if value.is_valid() => {
-                Attribute::Element(value + element_offset)
-            }
+            Attribute::Element(value) if value.is_valid() => Attribute::Element(value + element_offset),
             Attribute::ElementArray(mut items) => {
                 for item in items.iter_mut() {
                     if !item.is_valid() {
@@ -575,9 +580,7 @@ impl Pcf {
     }
 
     pub fn get_particle_system_definitions(&self) -> impl Iterator<Item = (ElementIdx, &Element)> {
-        self.root.definitions
-            .iter()
-            .map(|idx| (*idx, self.get(*idx).unwrap()))
+        self.root.definitions.iter().map(|idx| (*idx, self.get(*idx).unwrap()))
 
         // self.elements
         //     .iter()
@@ -592,7 +595,9 @@ impl Pcf {
     }
 
     pub fn get_root_particle_systems(&self) -> HashMap<ElementIdx, &Element> {
-        let mut definitions: HashMap<_, _> = self.root.definitions
+        let mut definitions: HashMap<_, _> = self
+            .root
+            .definitions
             .iter()
             .map(|idx| (*idx, self.get(*idx).unwrap()))
             .collect();
@@ -724,17 +729,18 @@ impl Pcf {
 
         new_elements
     }
-    
+
     /// Consumes a [`Pcf`], iterating over all of its elements to strip unecessary default values.
     pub fn stripped(
         mut self,
         particle_system_defaults: &HashMap<&'static CStr, Attribute>,
-        operator_defaults: &HashMap<CString, HashMap<CString, Attribute>>
+        operator_defaults: &HashMap<CString, HashMap<CString, Attribute>>,
     ) -> Self {
         let particle_system_defaults: HashMap<NameIndex, &Attribute> = particle_system_defaults
             .iter()
             .filter_map(|(key, value)| {
-                self.strings.iter()
+                self.strings
+                    .iter()
                     .position(|s| s.0.as_bytes().eq_ignore_ascii_case(key.to_bytes()))
                     .map(|idx| (idx as NameIndex, value))
             })
@@ -755,46 +761,55 @@ impl Pcf {
             })
             .collect();
 
-        self.elements = self.elements.into_iter().map(|element| {
-            let attributes = if element.type_idx == self.strings.particle_system_definition_type_idx {
-                element.attributes
-                    .into_iter()
-                    .filter(|(name_idx, attribute)| {
-                        if let Some(default) = particle_system_defaults.get(name_idx) && attribute == *default {
-                            false
+        self.elements = self
+            .elements
+            .into_iter()
+            .map(|element| {
+                let attributes = if element.type_idx == self.strings.particle_system_definition_type_idx {
+                    element
+                        .attributes
+                        .into_iter()
+                        .filter(|(name_idx, attribute)| {
+                            if let Some(default) = particle_system_defaults.get(name_idx)
+                                && attribute == *default
+                            {
+                                false
+                            } else {
+                                true
+                            }
+                        })
+                        .collect()
+                } else if element.type_idx == self.strings.particle_operator_type_idx {
+                    if let Some(Attribute::String(function_name)) =
+                        element.attributes.get(&self.strings.function_name_name_idx)
+                    {
+                        if let Some(default_attributes) = operator_defaults.get(function_name) {
+                            element
+                                .attributes
+                                .into_iter()
+                                .filter(|(name_idx, attribute)| {
+                                    if let Some(default) = default_attributes.get(name_idx)
+                                        && *attribute == **default
+                                    {
+                                        false
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .collect()
                         } else {
-                            true
+                            element.attributes
                         }
-                    })
-                    .collect()
-            } else if element.type_idx == self.strings.particle_operator_type_idx {
-                if let Some(Attribute::String(function_name)) = element.attributes.get(&self.strings.function_name_name_idx) {
-                    if let Some(default_attributes) = operator_defaults.get(function_name) {
-                        element.attributes.into_iter()
-                            .filter(|(name_idx, attribute)| {
-                                if let Some(default) = default_attributes.get(name_idx) && *attribute == **default {
-                                    false
-                                } else {
-                                    true
-                                }
-                            })
-                            .collect()
                     } else {
                         element.attributes
                     }
                 } else {
                     element.attributes
-                }
-            } else {
-                element.attributes
-            };
+                };
 
-            Element {
-                attributes,
-                ..element
-            }
-        })
-        .collect();
+                Element { attributes, ..element }
+            })
+            .collect();
 
         self.recompute_encoded_size();
 
@@ -809,7 +824,8 @@ impl Pcf {
         let particle_system_defaults: HashMap<NameIndex, &Attribute> = particle_system_defaults
             .iter()
             .filter_map(|(key, value)| {
-                self.strings.iter()
+                self.strings
+                    .iter()
                     .position(|s| s.0.as_bytes().eq_ignore_ascii_case(key.to_bytes()))
                     .map(|idx| (idx as NameIndex, value))
             })
@@ -818,20 +834,25 @@ impl Pcf {
         let operator_defaults: HashMap<NameIndex, &Attribute> = operator_defaults
             .iter()
             .filter_map(|(key, value)| {
-                self.strings.iter()
+                self.strings
+                    .iter()
                     .position(|s| s.0.as_bytes().eq_ignore_ascii_case(key.to_bytes()))
                     .map(|idx| (idx as NameIndex, value))
             })
             .collect();
 
-        self.elements = self.elements
+        self.elements = self
+            .elements
             .into_iter()
-            .map(|element|{
+            .map(|element| {
                 let attributes = if element.type_idx == self.strings.particle_system_definition_type_idx {
-                    element.attributes
+                    element
+                        .attributes
                         .into_iter()
                         .filter(|(name_idx, attribute)| {
-                            if let Some(default) = particle_system_defaults.get(name_idx) && attribute == *default {
+                            if let Some(default) = particle_system_defaults.get(name_idx)
+                                && attribute == *default
+                            {
                                 false
                             } else {
                                 true
@@ -839,10 +860,13 @@ impl Pcf {
                         })
                         .collect()
                 } else if element.type_idx == self.strings.particle_operator_type_idx {
-                    element.attributes
+                    element
+                        .attributes
                         .into_iter()
                         .filter(|(name_idx, attribute)| {
-                            if let Some(default) = operator_defaults.get(name_idx) && attribute == *default {
+                            if let Some(default) = operator_defaults.get(name_idx)
+                                && attribute == *default
+                            {
                                 false
                             } else {
                                 true
@@ -853,10 +877,7 @@ impl Pcf {
                     element.attributes
                 };
 
-                Element {
-                    attributes,
-                    ..element
-                }
+                Element { attributes, ..element }
             })
             .collect();
 
@@ -1120,9 +1141,12 @@ impl Pcf {
         let mut all_attributes = attributes?;
 
         // TODO: some PCFs have roots that contain more attributes.
-        
+
         if let Some(first_non_root_idx) = all_attributes.iter().position(|el| el.0 == 1) {
-            let attributes = all_attributes.split_off(first_non_root_idx).into_iter().chunk_by(|el| el.0);
+            let attributes = all_attributes
+                .split_off(first_non_root_idx)
+                .into_iter()
+                .chunk_by(|el| el.0);
             for (element_idx, group) in attributes.into_iter() {
                 // the element_idx returned by the attribute reader includes root at 0, but we took root out of the list
                 // so we need to subtract 1 from the idx
@@ -1136,7 +1160,9 @@ impl Pcf {
             let mut root_definitions: Option<Box<[ElementIdx]>> = None;
             let mut remaining_attributes = OrderMap::new();
             for (_, name_idx, attribute) in all_attributes {
-                if name_idx == definitions_name_idx && let Attribute::ElementArray(root_defs) = attribute {
+                if name_idx == definitions_name_idx
+                    && let Attribute::ElementArray(root_defs) = attribute
+                {
                     root_definitions = Some(root_defs);
                     continue;
                 }
@@ -1166,6 +1192,7 @@ impl Pcf {
 
 impl Pcf {
     pub fn get_system_graph(&self) -> Vec<Vec<ElementIdx>> {
+        todo!();
         // create an element graph, which may or may not contain multiple disconnected subgraphs.
         // take the first element, find all of its directly related elements, and group that into a single set...
         // take the next element, find all of its directly related elements, and see if any of them are in the latest set...
@@ -1173,14 +1200,13 @@ impl Pcf {
 
         // TODO: ask around for an algorithm that forms graphs of related nodes
         //       maybe try creating a map of child -> parent and iterating through every root system's dependencies to build a tree
-        let mut graphs: Vec<HashSet<ElementIdx>> = Vec::new();
-        let mut current_graph = HashSet::new();
+        let mut graphs: Vec<Vec<ElementIdx>> = Vec::new();
         for (element_idx, _) in self.get_root_particle_systems() {
             let dependencies = self.get_dependencies(element_idx);
             if graphs.is_empty() {
                 graphs.push(dependencies.into_iter().collect());
             } else {
-                
+                todo!();
             }
             // if current_graph.is_empty() {
             //     current_graph.extend(dependencies);
@@ -1193,12 +1219,14 @@ impl Pcf {
             // }
         }
 
-        graphs.push(current_graph.into_iter().collect_vec());
-
         graphs
     }
 
-    pub fn encoded_group_size_in_slow<'a>(&'a self, elements: impl IntoIterator<Item = &'a ElementIdx>, into: &Pcf) -> u64 {
+    pub fn encoded_group_size_in_slow<'a>(
+        &'a self,
+        elements: impl IntoIterator<Item = &'a ElementIdx>,
+        into: &Pcf,
+    ) -> u64 {
         let mut into = into.clone();
         let new = self.new_from_elements(elements);
         into.merge_in(new).unwrap();
@@ -1206,7 +1234,12 @@ impl Pcf {
     }
 
     pub fn encoded_group_size_in<'a>(&'a self, elements: impl IntoIterator<Item = &'a ElementIdx>, into: &Pcf) -> u64 {
-        fn visit<'a>(from: &'a Pcf, into: &Pcf, element_idx: ElementIdx, missing_strings: &mut HashSet<&'a CString>) -> usize {
+        fn visit<'a>(
+            from: &'a Pcf,
+            into: &Pcf,
+            element_idx: ElementIdx,
+            missing_strings: &mut HashSet<&'a CString>,
+        ) -> usize {
             let element = from.get(element_idx).unwrap();
             let additional_definition_size = if element.type_idx == from.strings.particle_system_definition_type_idx {
                 size_of::<ElementIdx>()
@@ -1251,15 +1284,21 @@ impl Pcf {
             .map(|element_idx| visit(self, into, *element_idx, &mut missing_strings))
             .sum();
         let missing_strings_size: usize = missing_strings.iter().map(|s| s.to_bytes_with_nul().len()).sum();
-        
+
         (elements_size + missing_strings_size) as u64
     }
 
-    /// computes how many additional bytes the [`Pcf`] would encode as if this element were added. 
-    /// 
+    /// computes how many additional bytes the [`Pcf`] would encode as if this element were added.
+    ///
     /// See [`Pcf::encoded_size`].
     pub fn element_encoded_size_in(&self, idx: ElementIdx, into: &Pcf) -> u64 {
-        fn visit<'a>(from: &'a Pcf, into: &Pcf, element: &Element, visited: &mut HashSet<ElementIdx>, missing_strings: &mut HashSet<&'a CString>) -> usize {
+        fn visit<'a>(
+            from: &'a Pcf,
+            into: &Pcf,
+            element: &Element,
+            visited: &mut HashSet<ElementIdx>,
+            missing_strings: &mut HashSet<&'a CString>,
+        ) -> usize {
             let additional_definition_size = if element.type_idx == from.strings.particle_system_definition_type_idx {
                 size_of::<ElementIdx>()
             } else {
@@ -1275,9 +1314,8 @@ impl Pcf {
             let element_attributes_type_size = size_of::<u8>() * element.attributes.len();
             let element_attributes_size: usize = element.attributes.values().map(Pcf::encoded_attribute_size).sum();
 
-
             let mut related_elements_size = 0;
-            
+
             let type_string = from.strings.get_name(element.type_idx).unwrap();
             if !into.strings().base.contains_key(type_string) {
                 missing_strings.insert(type_string);
@@ -1296,17 +1334,17 @@ impl Pcf {
                         } else {
                             0
                         }
-                    },
-                    Attribute::ElementArray(items) => {
-                        items.iter().map(|element_idx| {
+                    }
+                    Attribute::ElementArray(items) => items
+                        .iter()
+                        .map(|element_idx| {
                             if element_idx.is_valid() && visited.insert(*element_idx) {
                                 visit(from, into, from.get(*element_idx).unwrap(), visited, missing_strings)
                             } else {
                                 0
                             }
                         })
-                        .sum::<usize>()
-                    },
+                        .sum::<usize>(),
                     _ => 0,
                 };
             }
@@ -1331,10 +1369,10 @@ impl Pcf {
     }
 
     pub fn recompute_encoded_size(&mut self) {
-        self.last_encoded_size = self.encoded_magic_version_size() +
-            self.encoded_strings_size() +
-            self.encoded_elements_size() +
-            self.encoded_element_attributes_size();
+        self.last_encoded_size = self.encoded_magic_version_size()
+            + self.encoded_strings_size()
+            + self.encoded_elements_size()
+            + self.encoded_element_attributes_size();
     }
 
     /// computes the size of this PCF if it were encoded
@@ -1348,7 +1386,9 @@ impl Pcf {
 
     fn encoded_strings_size(&self) -> u64 {
         let count_size = size_of::<u16>();
-        let strings_size: usize = self.strings.base
+        let strings_size: usize = self
+            .strings
+            .base
             .iter()
             .map(|(string, _)| string.to_bytes_with_nul().len())
             .sum();
@@ -1364,18 +1404,19 @@ impl Pcf {
 
         let elements_type_size = size_of::<u16>() * self.elements.len();
         let elements_signature_size = size_of::<Signature>() * self.elements.len();
-        let elements_name_size: usize = self.elements
+        let elements_name_size: usize = self
+            .elements
             .iter()
             .map(|element| element.name.to_bytes_with_nul().len())
             .sum();
 
-        (element_count_size +
-            root_type_size +
-            root_name_size +
-            root_signature_size +
-            elements_type_size +
-            elements_signature_size +
-            elements_name_size) as u64
+        (element_count_size
+            + root_type_size
+            + root_name_size
+            + root_signature_size
+            + elements_type_size
+            + elements_signature_size
+            + elements_name_size) as u64
     }
 
     fn encoded_element_attributes_size(&self) -> u64 {
@@ -1390,16 +1431,18 @@ impl Pcf {
         let root_attributes_size: usize = self.root.attributes.values().map(Self::encoded_attribute_size).sum();
 
         let elements_attribute_count_size = size_of::<u32>() * self.elements.len();
-        let elements_sizes = self.elements
-            .iter()
-            .fold((0, 0, 0), |a, el| {
-                let attributes_name_size = size_of::<u16>() * el.attributes.len();
-                let attributes_type_size = size_of::<u8>() * el.attributes.len();
-                let attributes_size: usize = el.attributes.values().map(Self::encoded_attribute_size).sum();
+        let elements_sizes = self.elements.iter().fold((0, 0, 0), |a, el| {
+            let attributes_name_size = size_of::<u16>() * el.attributes.len();
+            let attributes_type_size = size_of::<u8>() * el.attributes.len();
+            let attributes_size: usize = el.attributes.values().map(Self::encoded_attribute_size).sum();
 
-                (a.0 + attributes_name_size, a.1 + attributes_type_size, a.2 + attributes_size)
-            });
-        
+            (
+                a.0 + attributes_name_size,
+                a.1 + attributes_type_size,
+                a.2 + attributes_size,
+            )
+        });
+
         (root_attribute_count_size
             + root_name_size
             + root_type_size
@@ -1431,8 +1474,12 @@ impl Pcf {
             Attribute::IntegerArray(array) => size_of::<u32>() + size_of::<i32>() * array.len(),
             Attribute::FloatArray(array) => size_of::<u32>() + size_of::<Float>() * array.len(),
             Attribute::BoolArray(array) => size_of::<u32>() + size_of::<Bool8>() * array.len(),
-            Attribute::StringArray(array) => size_of::<u32>() + array.iter().map(|el| el.as_bytes_with_nul().len()).sum::<usize>(),
-            Attribute::BinaryArray(array) => size_of::<u32>() + (size_of::<u32>() * array.len()) + array.iter().map(|el| el.len()).sum::<usize>(),
+            Attribute::StringArray(array) => {
+                size_of::<u32>() + array.iter().map(|el| el.as_bytes_with_nul().len()).sum::<usize>()
+            }
+            Attribute::BinaryArray(array) => {
+                size_of::<u32>() + (size_of::<u32>() * array.len()) + array.iter().map(|el| el.len()).sum::<usize>()
+            }
             Attribute::ColorArray(array) => size_of::<u32>() + size_of::<Color>() * array.len(),
             Attribute::Vector2Array(array) => size_of::<u32>() + size_of::<Vector2>() * array.len(),
             Attribute::Vector3Array(array) => size_of::<u32>() + size_of::<Vector3>() * array.len(),
@@ -1452,15 +1499,6 @@ impl Pcf {
 
         Ok(())
     }
-
-    // pub fn encode(&self, file: &mut impl std::io::Write, skip_default_attribute_values: bool) -> anyhow::Result<()> {
-    //     self.write_magic_version(file)?;
-    //     self.write_strings(file)?;
-    //     self.write_elements(file)?;
-    //     self.write_element_attributes(file)?;
-
-    //     Ok(())
-    // }
 
     pub(crate) fn write_magic_version(&self, file: &mut impl std::io::Write) -> anyhow::Result<()> {
         let version = self.version.as_cstr_with_nul_terminator().to_bytes_with_nul();
@@ -1527,7 +1565,7 @@ mod tests {
         let buf = BytesMut::with_capacity(TEST_PCF.len());
         let mut writer = buf.writer();
         pcf.encode(&mut writer).expect("writing failed");
-        
+
         let inner = writer.into_inner();
         assert_eq!(inner.len(), expected_size);
         assert_eq!(inner.len(), pcf.encoded_size() as usize);

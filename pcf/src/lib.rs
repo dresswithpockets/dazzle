@@ -6,7 +6,7 @@
 //! ```
 //!     use std::fs::{File, OpenOptions};
 //!     use std::io::{BufReader};
-//! 
+//!
 //!     let mut file = File::open("particles.pcf").unwrap();
 //!     let mut file = BufReader::new(file);
 //!     let mut pcf = pcf::decode(&mut file).unwrap();
@@ -26,8 +26,9 @@
 #![feature(error_generic_member_access)]
 
 pub mod attribute;
-pub mod pcf;
 pub mod index;
+pub mod new;
+pub mod pcf;
 
 pub use attribute::{Attribute, NameIndex};
 pub use pcf::{Element, ElementsExt, Pcf, Root, TypeIndex};

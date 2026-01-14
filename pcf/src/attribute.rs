@@ -167,7 +167,7 @@ impl WriteAttribute for CString {
     fn write_attribute(&self, writer: &mut impl io::Write) -> Result<(), Self::Err> {
         writer.write_all(self.as_bytes_with_nul())
     }
-    
+
     fn encoded_size(&self) -> usize {
         self.as_bytes_with_nul().len()
     }
@@ -188,7 +188,7 @@ impl WriteAttribute for Box<[u8]> {
         writer.write_u32::<LittleEndian>(self.len() as u32)?;
         writer.write_all(self)
     }
-    
+
     fn encoded_size(&self) -> usize {
         self.len()
     }
@@ -368,7 +368,8 @@ impl<'a, W: io::Write> AttributeWriter<'a, W> {
 
         // the root element always has at least 1 attribute, and the element array type is always 15.
 
-        self.writer.write_u32::<LittleEndian>(1 + root.attributes.len() as u32)?;
+        self.writer
+            .write_u32::<LittleEndian>(1 + root.attributes.len() as u32)?;
         self.writer
             .write_u16::<LittleEndian>(particle_system_definitions_name_idx)?;
         self.writer.write_u8(ELEMENT_ARRAY_TYPE)?;

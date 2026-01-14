@@ -1,4 +1,7 @@
-use std::{ops::{Add, AddAssign}, u32};
+use std::{
+    ops::{Add, AddAssign},
+    u32,
+};
 
 use derive_more::{Display, Into};
 use thiserror::Error;
@@ -9,7 +12,7 @@ pub struct ElementIdx(u32);
 
 impl ElementIdx {
     pub const INVALID: ElementIdx = ElementIdx(u32::MAX);
-    
+
     pub(crate) fn from_unchecked(value: u32) -> ElementIdx {
         ElementIdx(value)
     }
@@ -26,7 +29,7 @@ impl ElementIdx {
 #[derive(Debug, Error)]
 pub enum ElementIdxError {
     #[error("the element index cannot be 0, as the root element is never referenced")]
-    Zero
+    Zero,
 }
 
 impl TryFrom<u32> for ElementIdx {
