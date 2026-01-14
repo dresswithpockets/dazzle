@@ -1,11 +1,18 @@
-use std::{ffi::{CStr, CString}, fmt::Display, str::FromStr};
+use std::{
+    ffi::{CStr, CString},
+    fmt::Display,
+    str::FromStr,
+};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use itertools::Itertools;
 use ordermap::OrderMap;
 use thiserror::Error;
 
-use crate::{Signature, SymbolIdx, Symbols, attribute::{Attribute, AttributeReader, AttributeWriter}};
+use crate::{
+    Signature, SymbolIdx, Symbols,
+    attribute::{Attribute, AttributeReader, AttributeWriter},
+};
 
 #[derive(Debug, Clone, Default)]
 /// A Valve Particles Config File. These are DMX files with certain constraints:
@@ -34,7 +41,7 @@ pub enum Version {
     Binary3Pcf1,
 }
 
-impl Version {   
+impl Version {
     fn as_cstr_with_nul_terminator(&self) -> &'static CStr {
         match self {
             Version::Binary2Dmx1 => c"<!-- dmx encoding binary 2 format dmx 1 -->\x0A",
@@ -68,7 +75,7 @@ pub enum ParseVersionError {
 
 impl FromStr for Version {
     type Err = ParseVersionError;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         const BINARY2_DMX1: &str = "<!-- dmx encoding binary 2 format dmx 1 -->\x0A";
         const BINARY2_PCF1: &str = "<!-- dmx encoding binary 2 format pcf 1 -->\x0A";
@@ -163,9 +170,7 @@ impl Dmx {
         }
 
         // we add one to element_count since AttributeReader will read root's attributes + elements' attributes
-        let attributes: Result<Vec<_>, _> = AttributeReader::try_from(file, element_count)?
-            .into_iter()
-            .collect();
+        let attributes: Result<Vec<_>, _> = AttributeReader::try_from(file, element_count)?.into_iter().collect();
         let attributes = attributes?.into_iter().chunk_by(|el| el.0);
 
         for (element_idx, group) in attributes.into_iter() {

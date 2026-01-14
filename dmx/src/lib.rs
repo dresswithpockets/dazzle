@@ -4,8 +4,8 @@
 #![feature(associated_type_defaults)]
 #![feature(error_generic_member_access)]
 
-pub mod dmx;
 pub mod attribute;
+pub mod dmx;
 pub mod index;
 
 use std::ffi::CString;
