@@ -24,6 +24,7 @@
 #![feature(trim_prefix_suffix)]
 #![feature(associated_type_defaults)]
 #![feature(error_generic_member_access)]
+#![feature(cstr_display)]
 
 pub mod attribute;
 pub mod index;
