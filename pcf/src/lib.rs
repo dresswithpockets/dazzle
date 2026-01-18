@@ -25,6 +25,8 @@
 #![feature(associated_type_defaults)]
 #![feature(error_generic_member_access)]
 #![feature(cstr_display)]
+#![feature(ascii_char)]
+#![feature(string_into_chars)]
 
 pub mod attribute;
 pub mod index;
