@@ -56,7 +56,7 @@ impl PcfBinMap {
     /// ## Errors
     ///
     /// If the element can't be fit into any [`Pcf`], then [`Error::NoFit`] is returned.
-    /// 
+    ///
     /// If there is an error when merging, then [`Error::CantMerge`] is returned.
     pub fn pack_group(&mut self, from: &mut pcf::new::Pcf) -> Result<(), Error> {
         let mut packed = false;

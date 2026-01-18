@@ -91,7 +91,7 @@ impl Attribute {
             Attribute::MatrixArray(_) => 28,
         }
     }
-    
+
     pub fn is_empty_element_array(&self) -> bool {
         matches!(self, Attribute::ElementArray(items) if items.is_empty())
     }

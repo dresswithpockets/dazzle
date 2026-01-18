@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap},
-    ffi::CString,
-};
+use std::{collections::HashMap, ffi::CString};
 
 use typed_path::Utf8PlatformPathBuf;
 use vpk::VPK;

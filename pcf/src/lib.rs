@@ -33,8 +33,8 @@ pub mod index;
 pub mod new;
 mod strings;
 
-pub use new::{Pcf, ParticleSystem, Root};
-pub use attribute::{Attribute};
+pub use attribute::Attribute;
+pub use new::{ParticleSystem, Pcf, Root};
 use thiserror::Error;
 
 #[derive(Debug, Error)]

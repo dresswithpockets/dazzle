@@ -54,7 +54,9 @@ impl Attribute {
             Attribute::StringArray(value) => {
                 size_of::<u32>() + value.len() + value.iter().map(String::len).sum::<usize>()
             }
-            Attribute::BinaryArray(value) => size_of::<u32>() + value.iter().map(|value| size_of::<u32>() + value.len()).sum::<usize>(),
+            Attribute::BinaryArray(value) => {
+                size_of::<u32>() + value.iter().map(|value| size_of::<u32>() + value.len()).sum::<usize>()
+            }
             Attribute::ColorArray(value) => size_of::<u32>() + (value.len() * size_of::<Color>()),
             Attribute::Vector2Array(value) => size_of::<u32>() + (value.len() * size_of::<Vector2>()),
             Attribute::Vector3Array(value) => size_of::<u32>() + (value.len() * size_of::<Vector3>()),

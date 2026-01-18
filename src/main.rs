@@ -45,13 +45,16 @@ use std::{
 
 use bytes::{Buf, BufMut, BytesMut};
 use directories::ProjectDirs;
-use dmx::{Dmx, attribute::{Color, Vector3}};
+use dmx::{
+    Dmx,
+    attribute::{Color, Vector3},
+};
 use nanoserde::DeJson;
+use rayon::prelude::*;
 use single_instance::SingleInstance;
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf, Utf8UnixPathBuf};
 use vpk::VPK;
-use rayon::prelude::*;
 
 use crate::addon::Sources;
 use crate::app::App;
@@ -297,7 +300,10 @@ fn get_default_attribute_map() -> anyhow::Result<HashMap<String, HashMap<String,
             .attributes
             .into_iter()
             .map(|(name_idx, attribute)| {
-                let name = symbols.base.get_index(name_idx as usize).expect("this should never happen");
+                let name = symbols
+                    .base
+                    .get_index(name_idx as usize)
+                    .expect("this should never happen");
                 (name.clone(), attribute)
             })
             .collect();
@@ -337,14 +343,17 @@ fn get_vanilla_pcf_info() -> Result<Vec<VanillaPcf>, io::Error> {
         entries.push((name, entry.path(), metadata));
     }
 
-    let pcfs: Result<Vec<VanillaPcf>, io::Error> = entries.into_par_iter().map(|(name, file_path, metadata)| -> Result<VanillaPcf, io::Error> {
-        println!("decoding {name} as DMX and converting to PCF");
-        let mut reader = File::open_buffered(file_path)?;
-        let dmx = dmx::decode(&mut reader).unwrap();
-        let pcf = pcf::new::Pcf::try_from(dmx).unwrap();
+    let pcfs: Result<Vec<VanillaPcf>, io::Error> = entries
+        .into_par_iter()
+        .map(|(name, file_path, metadata)| -> Result<VanillaPcf, io::Error> {
+            println!("decoding {name} as DMX and converting to PCF");
+            let mut reader = File::open_buffered(file_path)?;
+            let dmx = dmx::decode(&mut reader).unwrap();
+            let pcf = pcf::new::Pcf::try_from(dmx).unwrap();
 
-        Ok(VanillaPcf { name, pcf, metadata })
-    }).collect();
+            Ok(VanillaPcf { name, pcf, metadata })
+        })
+        .collect();
 
     pcfs
 }
@@ -411,7 +420,9 @@ fn next() -> anyhow::Result<()> {
         .into_par_iter()
         .map(|vanilla_pcf| {
             println!("stripping {} of unecessary defaults", vanilla_pcf.name);
-            let pcf = vanilla_pcf.pcf.defaults_stripped(&particle_system_defaults, &operator_defaults);
+            let pcf = vanilla_pcf
+                .pcf
+                .defaults_stripped(&particle_system_defaults, &operator_defaults);
             VanillaPcf { pcf, ..vanilla_pcf }
         })
         .collect();
@@ -436,9 +447,7 @@ fn next() -> anyhow::Result<()> {
     println!("getting vanilla particle system map");
     let vanilla_graphs: Vec<_> = vanilla_pcfs
         .into_iter()
-        .map(|vanilla_pcf| {
-            (vanilla_pcf.name, vanilla_pcf.pcf.into_connected())
-        })
+        .map(|vanilla_pcf| (vanilla_pcf.name, vanilla_pcf.pcf.into_connected()))
         .collect();
 
     println!("discovered {} vanilla particle systems", vanilla_graphs.len());
@@ -517,7 +526,8 @@ fn next() -> anyhow::Result<()> {
     for (name, graphs) in vanilla_graphs {
         println!("bin-packing {} graphs from {}.", graphs.len(), name);
         for mut graph in graphs {
-            let missing_system = graph.particle_systems()
+            let missing_system = graph
+                .particle_systems()
                 .iter()
                 .any(|system| !bins.has_system_name(&system.name));
 

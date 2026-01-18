@@ -6,7 +6,8 @@ use std::{
 
 use derive_more::From;
 use dmx::{
-    ElementIdx, Signature, dmx::{Dmx, Element, Version}
+    ElementIdx, Signature,
+    dmx::{Dmx, Element, Version},
 };
 use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
@@ -14,7 +15,10 @@ use thiserror::Error;
 
 use dmx::attribute::{Bool8, Color, Float, Matrix, Vector2, Vector3, Vector4};
 
-use crate::{attribute::Attribute, strings::{str_to_cstring, string_to_cstring}};
+use crate::{
+    attribute::Attribute,
+    strings::{str_to_cstring, string_to_cstring},
+};
 
 pub type SymbolIdx = u16;
 pub type ParticleSystemIdx = usize;
@@ -182,7 +186,7 @@ impl Pcf {
 
         // accounting for the element counter
         let mut elements_size = 0;
-        
+
         // 32-bit element counter
         elements_size += size_of::<u32>();
 
@@ -221,7 +225,10 @@ impl Pcf {
         attributes_size += size_of::<u32>();
 
         // the root element's particle system definitions will become an attribute
-        attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + size_of::<u32>() + (self.root.particle_systems.len() * size_of::<ElementIdx>());
+        attributes_size += size_of::<SymbolIdx>()
+            + size_of::<u8>()
+            + size_of::<u32>()
+            + (self.root.particle_systems.len() * size_of::<ElementIdx>());
 
         for (_, attribute) in &self.root.attributes {
             // the 16-bit name index
@@ -275,7 +282,7 @@ impl Pcf {
                 attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + size_of::<u32>();
                 attributes_size += system.renderers.len() * size_of::<ElementIdx>();
             }
-            
+
             for child in &system.children {
                 attributes_size += size_of::<u32>();
                 // child.child will also become an attribute
@@ -348,7 +355,10 @@ impl Pcf {
 
     pub fn compute_merged_size(&self, from: &Self) -> usize {
         // size of all new symbols + a nul byte for each symbol, because these are encoded as c-strings
-        let new_symbols_size = from.symbols.base.iter()
+        let new_symbols_size = from
+            .symbols
+            .base
+            .iter()
             .filter(|symbol| !self.symbols.base.contains(*symbol))
             .map(|symbol| symbol.len() + 1)
             .sum::<usize>();
@@ -455,7 +465,7 @@ impl Pcf {
                 attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + size_of::<u32>();
                 attributes_size += system.renderers.len() * size_of::<ElementIdx>();
             }
-            
+
             for child in &system.children {
                 attributes_size += size_of::<u32>();
                 // child.child will also become an attribute
@@ -571,7 +581,8 @@ impl Pcf {
         let mut groups = Vec::new();
         let graphs = bfs(&graph);
         for graph in graphs {
-            let old_to_new_idx: HashMap<_, _> = graph.iter()
+            let old_to_new_idx: HashMap<_, _> = graph
+                .iter()
                 .enumerate()
                 .map(|(new_idx, old_idx)| (*old_idx, ElementIdx::from(new_idx)))
                 .collect();
@@ -602,7 +613,8 @@ impl Pcf {
                         attributes: self.root.attributes.clone(),
                     },
                     encoded_size: 0,
-                }.unused_symbols_stripped()
+                }
+                .unused_symbols_stripped()
             })
             .collect()
     }
@@ -653,7 +665,11 @@ impl Pcf {
             }
         }
 
-        let mut groups: Vec<_> = system_to_group_idx.into_values().unique().map(|group_idx| mem::take(&mut groups[group_idx])).collect();
+        let mut groups: Vec<_> = system_to_group_idx
+            .into_values()
+            .unique()
+            .map(|group_idx| mem::take(&mut groups[group_idx]))
+            .collect();
 
         // at this point each group should only contain related particle systems. Now we need to fix child indices
         for group in &mut groups {
@@ -691,7 +707,8 @@ impl Pcf {
                         attributes: self.root.attributes.clone(),
                     },
                     encoded_size: 0,
-                }.unused_symbols_stripped()
+                }
+                .unused_symbols_stripped()
             })
             .collect()
     }
@@ -928,9 +945,12 @@ impl Pcf {
     ) -> Self {
         fn remove_operator_defaults(op: &mut Operator, defaults: &HashMap<&String, HashMap<SymbolIdx, &Attribute>>) {
             if let Some(defaults) = defaults.get(&op.function_name) {
-                op.attributes = mem::take(&mut op.attributes).into_iter()
+                op.attributes = mem::take(&mut op.attributes)
+                    .into_iter()
                     .filter(|(name_idx, attribute)| {
-                        if let Some(default) = defaults.get(name_idx) && attribute == *default {
+                        if let Some(default) = defaults.get(name_idx)
+                            && attribute == *default
+                        {
                             false
                         } else {
                             true
@@ -940,17 +960,22 @@ impl Pcf {
             }
         }
 
-        let particle_defaults: HashMap<_, _> = particle_defaults.iter()
+        let particle_defaults: HashMap<_, _> = particle_defaults
+            .iter()
             .filter_map(|(name, value)| {
-                self.symbols.base.iter()
+                self.symbols
+                    .base
+                    .iter()
                     .position(|s| s == name)
                     .map(|idx| (idx as SymbolIdx, value))
             })
             .collect();
 
-        let operator_defaults: HashMap<_, _> = operator_defaults.iter()
+        let operator_defaults: HashMap<_, _> = operator_defaults
+            .iter()
             .map(|(function_name, defaults)| {
-                let map: HashMap<_, _> = defaults.iter()
+                let map: HashMap<_, _> = defaults
+                    .iter()
                     .filter_map(|(attribute_name, attribute)| {
                         let name_idx = self.symbols.base.get_index_of(attribute_name)? as SymbolIdx;
                         Some((name_idx, attribute))
@@ -962,9 +987,12 @@ impl Pcf {
             .collect();
 
         for system in &mut self.root.particle_systems {
-            system.attributes = mem::take(&mut system.attributes).into_iter()
+            system.attributes = mem::take(&mut system.attributes)
+                .into_iter()
                 .filter(|(name_idx, attribute)| {
-                    if let Some(default) = particle_defaults.get(name_idx) && attribute == *default {
+                    if let Some(default) = particle_defaults.get(name_idx)
+                        && attribute == *default
+                    {
                         false
                     } else {
                         true
@@ -972,21 +1000,39 @@ impl Pcf {
                 })
                 .collect();
 
-            system.constraints.iter_mut().for_each(|op| remove_operator_defaults(op, &operator_defaults));
-            system.emitters.iter_mut().for_each(|op| remove_operator_defaults(op, &operator_defaults));
-            system.forces.iter_mut().for_each(|op| remove_operator_defaults(op, &operator_defaults));
-            system.initializers.iter_mut().for_each(|op| remove_operator_defaults(op, &operator_defaults));
-            system.operators.iter_mut().for_each(|op| remove_operator_defaults(op, &operator_defaults));
-            system.renderers.iter_mut().for_each(|op| remove_operator_defaults(op, &operator_defaults));
+            system
+                .constraints
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
+            system
+                .emitters
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
+            system
+                .forces
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
+            system
+                .initializers
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
+            system
+                .operators
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
+            system
+                .renderers
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
         }
 
         self
     }
-    
+
     pub fn encoded_size(&self) -> usize {
         self.encoded_size
     }
-    
+
     pub fn into_parts(self) -> (Version, Symbols, Root) {
         (self.version, self.symbols, self.root)
     }
@@ -1007,7 +1053,7 @@ impl Pcf {
         pcf.encoded_size = pcf.compute_encoded_size();
         pcf
     }
-    
+
     pub fn particle_systems(&self) -> &[ParticleSystem] {
         &self.root.particle_systems
     }
@@ -1109,8 +1155,8 @@ impl TryFrom<Dmx> for Pcf {
                             let name = child_element.name.to_string_lossy().into_owned();
                             let signature = child_element.signature;
                             let child = *system_indices
-                                    .get(child_system_idx)
-                                    .expect("this relationship should always be valid");
+                                .get(child_system_idx)
+                                .expect("this relationship should always be valid");
                             children.push(Child {
                                 name,
                                 signature,
@@ -1229,8 +1275,7 @@ impl From<Pcf> for Dmx {
         }
 
         let mut root_attributes = attribute_map_to_dmx_map(pcf.root.attributes);
-        let particle_system_definitions: Box<_> =
-            (1..=pcf.root.particle_systems.len()).map(ElementIdx::from).collect();
+        let particle_system_definitions: Box<_> = (1..=pcf.root.particle_systems.len()).map(ElementIdx::from).collect();
 
         root_attributes.insert(
             pcf.symbols.particle_system_definitions,
@@ -1293,12 +1338,7 @@ impl From<Pcf> for Dmx {
                 &mut emitter_indices,
                 &pcf.symbols,
             );
-            push_operators(
-                particle_system.forces,
-                &mut elements,
-                &mut force_indices,
-                &pcf.symbols,
-            );
+            push_operators(particle_system.forces, &mut elements, &mut force_indices, &pcf.symbols);
             push_operators(
                 particle_system.initializers,
                 &mut elements,
@@ -1403,7 +1443,6 @@ impl Operator {
         })
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct Symbols {
@@ -1532,7 +1571,11 @@ impl From<Symbols> for dmx::Symbols {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::{HashSet, VecDeque}, fs::OpenOptions, io::BufWriter};
+    use std::{
+        collections::{HashSet, VecDeque},
+        fs::OpenOptions,
+        io::BufWriter,
+    };
 
     use bytes::{Buf, BufMut, BytesMut};
     use dmx::{Dmx, ElementIdx, SymbolIdx, dmx::Element};
@@ -1569,10 +1612,7 @@ mod tests {
                     signature: [0; 16],
                     attributes: OrderMap::from([
                         (6, c"root attribute value".to_owned().into()),
-                        (1, [
-                            ElementIdx::from(1usize),
-                            ElementIdx::from(2usize),
-                        ].into()),
+                        (1, [ElementIdx::from(1usize), ElementIdx::from(2usize)].into()),
                     ]),
                 },
                 Element {
@@ -1588,9 +1628,7 @@ mod tests {
                     type_idx: 2,
                     name: c"system2".to_owned(),
                     signature: [2; 16],
-                    attributes: OrderMap::from([
-                        (8, c"system2 attribute value".to_owned().into()),
-                    ]),
+                    attributes: OrderMap::from([(8, c"system2 attribute value".to_owned().into())]),
                 },
                 Element {
                     type_idx: 3,
@@ -1619,7 +1657,10 @@ mod tests {
 
         assert_eq!(expected_size, new_size);
         assert_eq!(expected_dmx, new_dmx);
-        assert_eq!(expected_size, computed_size, "compute_encoded_size is not computing the correct size");
+        assert_eq!(
+            expected_size, computed_size,
+            "compute_encoded_size is not computing the correct size"
+        );
     }
 
     #[test]
@@ -1645,10 +1686,7 @@ mod tests {
                     signature: [0; 16],
                     attributes: OrderMap::from([
                         (6, c"root attribute value".to_owned().into()),
-                        (1, [
-                            ElementIdx::from(1usize),
-                            ElementIdx::from(2usize),
-                        ].into()),
+                        (1, [ElementIdx::from(1usize), ElementIdx::from(2usize)].into()),
                     ]),
                 },
                 Element {
@@ -1664,17 +1702,13 @@ mod tests {
                     type_idx: 2,
                     name: c"system2".to_owned(),
                     signature: [2; 16],
-                    attributes: OrderMap::from([
-                        (8, c"system2 attribute value".to_owned().into()),
-                    ]),
+                    attributes: OrderMap::from([(8, c"system2 attribute value".to_owned().into())]),
                 },
                 Element {
                     type_idx: 3,
                     name: c"operator1".to_owned(),
                     signature: [3; 16],
-                    attributes: OrderMap::from([
-                        (5, c"test function name".to_owned().into()),
-                    ]),
+                    attributes: OrderMap::from([(5, c"test function name".to_owned().into())]),
                 },
             ],
         };
@@ -1694,7 +1728,10 @@ mod tests {
 
         assert_eq!(expected_size, new_size);
         assert_eq!(expected_dmx, new_dmx);
-        assert_eq!(expected_size, computed_size, "compute_encoded_size is not computing the correct size");
+        assert_eq!(
+            expected_size, computed_size,
+            "compute_encoded_size is not computing the correct size"
+        );
     }
 
     #[test]
@@ -1724,7 +1761,9 @@ mod tests {
         let mut original_elements = original_dmx.elements.clone();
         original_elements.sort_unstable_by(|a, b| a.name.cmp(&b.name).then(a.signature.cmp(&b.signature)));
         for element in &mut original_elements {
-            element.attributes.sort_unstable_by_key(|a, _| original_strings.get_index(*a as usize).unwrap());
+            element
+                .attributes
+                .sort_unstable_by_key(|a, _| original_strings.get_index(*a as usize).unwrap());
         }
 
         let pcf: Pcf = original_dmx.try_into().unwrap();
@@ -1733,12 +1772,19 @@ mod tests {
         let mut new_elements = new_dmx.elements.clone();
         new_elements.sort_unstable_by(|a, b| a.name.cmp(&b.name).then(a.signature.cmp(&b.signature)));
         for element in &mut new_elements {
-            element.attributes.sort_unstable_by_key(|a, _| original_strings.get_index(*a as usize).unwrap());
+            element
+                .attributes
+                .sort_unstable_by_key(|a, _| original_strings.get_index(*a as usize).unwrap());
         }
 
         for (idx, original_element) in original_elements.iter_mut().enumerate() {
             let new_element = &new_elements[idx];
-            assert_eq!(original_element.name, new_element.name, "new is missing {}", original_element.name.display());
+            assert_eq!(
+                original_element.name,
+                new_element.name,
+                "new is missing {}",
+                original_element.name.display()
+            );
 
             for (name_idx, attribute) in &original_element.attributes {
                 if attribute.is_empty_element_array() {
@@ -1751,7 +1797,14 @@ mod tests {
                 match attribute {
                     dmx::attribute::Attribute::Element(_) => (),
                     dmx::attribute::Attribute::ElementArray(_) => (),
-                    _ => assert_eq!(attribute, new_value, "new {}.{} (#{:x?}) mismatched", original_element.name.display(), name.display(), original_element.signature),
+                    _ => assert_eq!(
+                        attribute,
+                        new_value,
+                        "new {}.{} (#{:x?}) mismatched",
+                        original_element.name.display(),
+                        name.display(),
+                        original_element.signature
+                    ),
                 }
             }
         }
@@ -1762,17 +1815,26 @@ mod tests {
         let mut reader = TEST_PCF_DATA.reader();
         let original_dmx = dmx::decode(&mut reader).unwrap();
 
-        let attribute_count = original_dmx.elements.iter().map(|el|el.attributes.len()).sum::<usize>();
+        let attribute_count = original_dmx
+            .elements
+            .iter()
+            .map(|el| el.attributes.len())
+            .sum::<usize>();
         println!("attribute count: {attribute_count}");
 
         let pcf: Pcf = original_dmx.try_into().unwrap();
         println!("{}", pcf.compute_encoded_size());
         let new_dmx: Dmx = pcf.into();
 
-        let attribute_count = new_dmx.elements.iter().map(|el|el.attributes.len()).sum::<usize>();
+        let attribute_count = new_dmx.elements.iter().map(|el| el.attributes.len()).sum::<usize>();
         println!("attribute count: {attribute_count}");
 
-        let file = OpenOptions::new().create(true).truncate(true).write(true).open("pcf_converts_to_valid_dmx.pcf").unwrap();
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open("pcf_converts_to_valid_dmx.pcf")
+            .unwrap();
         let mut writer = BufWriter::new(file);
         new_dmx.encode(&mut writer).expect("writing failed");
 
@@ -1804,7 +1866,12 @@ mod tests {
     #[ignore]
     fn test_dfs() {
         fn dfs_wcc(association_list: &OrderMap<char, Node>) -> Vec<OrderSet<char>> {
-            fn dfs(list: &OrderMap<char, Node>, component: &mut OrderSet<char>, value: &Node, visited: &mut HashSet<char>) {
+            fn dfs(
+                list: &OrderMap<char, Node>,
+                component: &mut OrderSet<char>,
+                value: &Node,
+                visited: &mut HashSet<char>,
+            ) {
                 for child in &value.children {
                     if visited.insert(*child) {
                         component.insert(*child);
@@ -1854,13 +1921,18 @@ mod tests {
         }
 
         fn connected_components(graph: &OrderMap<char, Node>) -> Vec<Vec<char>> {
-            fn find_connected(key: char, graph: &OrderMap<char, Node>, visited: &mut HashSet<char>, component: &mut Vec<char>) {
+            fn find_connected(
+                key: char,
+                graph: &OrderMap<char, Node>,
+                visited: &mut HashSet<char>,
+                component: &mut Vec<char>,
+            ) {
                 visited.insert(key);
                 component.push(key);
 
                 for v in &graph.get(&key).unwrap().children {
                     if visited.contains(v) {
-                        continue
+                        continue;
                     }
 
                     find_connected(*v, graph, visited, component);
@@ -1884,11 +1956,30 @@ mod tests {
         }
 
         let nodes = OrderMap::from([
-            ('0', Node { children: vec!['1', '2'] }),
-            ('1', Node { children: vec!['0', '3']}),
-            ('2', Node { children: vec!['0', '3']}),
-            ('3', Node { children: vec!['1', '2'] }),
-
+            (
+                '0',
+                Node {
+                    children: vec!['1', '2'],
+                },
+            ),
+            (
+                '1',
+                Node {
+                    children: vec!['0', '3'],
+                },
+            ),
+            (
+                '2',
+                Node {
+                    children: vec!['0', '3'],
+                },
+            ),
+            (
+                '3',
+                Node {
+                    children: vec!['1', '2'],
+                },
+            ),
             ('4', Node { children: vec!['5'] }),
             ('5', Node { children: vec!['4'] }),
         ]);
@@ -1900,12 +1991,12 @@ mod tests {
         d <- c
 
         e -> f
-        
+
         */
 
         let graphs = dfs_wcc(&nodes);
         assert_eq!(2, graphs.len());
-        
+
         let graphs = bfs_wcc(&nodes);
         assert_eq!(2, graphs.len());
 

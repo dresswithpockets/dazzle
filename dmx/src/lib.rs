@@ -15,8 +15,8 @@ use ordermap::OrderSet;
 pub type Signature = [u8; 16];
 pub type SymbolIdx = u16;
 pub type Symbols = OrderSet<CString>;
-pub use index::ElementIdx;
 pub use dmx::Dmx;
+pub use index::ElementIdx;
 
 pub fn decode(buf: &mut impl std::io::BufRead) -> Result<Dmx, dmx::Error> {
     Dmx::decode(buf)
