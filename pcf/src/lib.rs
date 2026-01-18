@@ -31,11 +31,22 @@
 pub mod attribute;
 pub mod index;
 pub mod new;
-pub mod pcf;
+mod strings;
 
-pub use attribute::{Attribute, NameIndex};
-pub use pcf::{Element, ElementsExt, Pcf, Root, TypeIndex};
+pub use new::{Pcf, ParticleSystem, Root};
+pub use attribute::{Attribute};
+use thiserror::Error;
 
-pub fn decode(buf: &mut impl std::io::BufRead) -> Result<Pcf, pcf::Error> {
-    Pcf::decode(buf)
+#[derive(Debug, Error)]
+pub enum DecodeError {
+    #[error(transparent)]
+    Dmx(#[from] dmx::dmx::Error),
+
+    #[error(transparent)]
+    Pcf(#[from] new::Error),
+}
+
+pub fn decode(buf: &mut impl std::io::BufRead) -> Result<Pcf, DecodeError> {
+    let dmx = dmx::decode(buf)?;
+    Ok(Pcf::try_from(dmx)?)
 }

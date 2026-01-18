@@ -16,6 +16,7 @@ ordered-float = { version = "5.0", default-features = false }
 ordermap = "1.0"
 nanoserde = { path = "../nanoserde", default-features = false, features = ["std", "json"] }
 itertools = "0.14"
+petgraph = "0.8"
 
 [lints.rust]
 unsafe_code = "allow"

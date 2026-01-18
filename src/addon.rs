@@ -37,7 +37,7 @@ pub struct Addon {
     pub relative_material_files: HashMap<String, Material>,
 
     /// A map of absolute PCF paths to decoded PCFs, provided by the addon
-    pub particle_files: HashMap<Utf8PlatformPathBuf, pcf::Pcf>,
+    pub particle_files: HashMap<Utf8PlatformPathBuf, pcf::new::Pcf>,
 }
 
 #[derive(Debug, Clone)]
@@ -141,7 +141,8 @@ impl Extracted {
             let path = paths::to_typed(&path);
 
             let mut file = File::open_buffered(path.as_ref())?;
-            let pcf = pcf::decode(&mut file)?;
+            let dmx = dmx::decode(&mut file)?;
+            let pcf = pcf::new::Pcf::try_from(dmx)?;
             particle_files.insert(path.into_owned(), pcf);
         }
 

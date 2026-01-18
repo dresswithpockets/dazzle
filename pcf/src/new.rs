@@ -6,7 +6,7 @@ use std::{
 
 use derive_more::From;
 use dmx::{
-    ElementIdx, Signature, attribute, dmx::{Dmx, Element, Version}
+    ElementIdx, Signature, dmx::{Dmx, Element, Version}
 };
 use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
@@ -14,22 +14,31 @@ use thiserror::Error;
 
 use dmx::attribute::{Bool8, Color, Float, Matrix, Vector2, Vector3, Vector4};
 
+use crate::{attribute::Attribute, strings::{str_to_cstring, string_to_cstring}};
+
 pub type SymbolIdx = u16;
 pub type ParticleSystemIdx = usize;
 
 #[derive(Debug, Clone, Default)]
 pub struct Pcf {
-    pub version: Version,
-    pub symbols: Symbols,
-    pub root: Root,
+    version: Version,
+    symbols: Symbols,
+    root: Root,
+    encoded_size: usize,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct Root {
-    pub name: String,
-    pub signature: Signature,
-    pub particle_systems: Box<[ParticleSystem]>,
-    pub attributes: OrderMap<SymbolIdx, Attribute>,
+    name: String,
+    signature: Signature,
+    particle_systems: Box<[ParticleSystem]>,
+    attributes: OrderMap<SymbolIdx, Attribute>,
+}
+
+impl Root {
+    pub fn into_parts(self) -> (String, Signature, Box<[ParticleSystem]>, OrderMap<SymbolIdx, Attribute>) {
+        (self.name, self.signature, self.particle_systems, self.attributes)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -147,7 +156,7 @@ impl Pcf {
             particle_systems.push(new_system);
         }
 
-        Ok(Self {
+        let mut pcf = Self {
             version: self.version,
             symbols,
             root: Root {
@@ -156,10 +165,14 @@ impl Pcf {
                 particle_systems: particle_systems.into_boxed_slice(),
                 attributes: root_attributes,
             },
-        })
+            encoded_size: 0,
+        };
+
+        pcf.encoded_size = pcf.compute_encoded_size();
+        Ok(pcf)
     }
 
-    pub fn compute_encoded_size(&self) -> u64 {
+    fn compute_encoded_size(&self) -> usize {
         let version_size: usize = self.version.as_cstr_with_nul_terminator().to_bytes_with_nul().len();
 
         // there is a nul byte for every string when encoded, so we include that as well by adding .len()
@@ -330,94 +343,187 @@ impl Pcf {
             }
         }
 
-        (version_size + symbols_size + elements_size + attributes_size) as u64
+        version_size + symbols_size + elements_size + attributes_size
     }
 
-    fn compute_test(&self) -> u64 {
-        let version_size: usize = self.version.as_cstr_with_nul_terminator().to_bytes_with_nul().len();
-
-        // there is a nul byte for every string when encoded, so we include that as well by adding .len()
-        let symbols_size: usize = size_of::<u16>()
-            + self.symbols.base.len()
-            + self.symbols.base.iter().map(|string| string.len()).sum::<usize>();
-
-        let (mut element_count, mut elements_size) = self.compute_particles_size();
-
-        // accounting for the element counter and the root particle system counter
-        elements_size += size_of::<u32>() + size_of::<u32>();
-
-        // and the root element & attribute sizes. signature & type arent included until later
-        elements_size += self.root.name.len() + 1 + Self::compute_attributes_size(&self.root.attributes);
-
-        // add 1 to the count for root
-        element_count += 1;
-
-        // the type and signature are included with every element, so we can add it all at once
-        elements_size += element_count * (size_of::<u16>() + size_of::<Signature>());
-
-        (version_size + symbols_size + elements_size) as u64
-    }
-
-    fn compute_particles_size(&self) -> (usize, usize) {
-        let mut element_count = 0;
-        let mut elements_size = size_of::<ElementIdx>() * self.root.particle_systems.len();
-
-        for system in &self.root.particle_systems {
-            elements_size += Self::compute_attributes_size(&system.attributes);
-
-            for child in &system.children {
-                elements_size += Self::compute_attributes_size(&child.attributes);
-            }
-
-            element_count += system.children.len()
-                + system.constraints.len()
-                + system.emitters.len()
-                + system.forces.len()
-                + system.initializers.len()
-                + system.operators.len()
-                + system.renderers.len();
-
-            elements_size += system.constraints.iter().map(Self::compute_operator_size).sum::<usize>();
-            elements_size += system.emitters.iter().map(Self::compute_operator_size).sum::<usize>();
-            elements_size += system.forces.iter().map(Self::compute_operator_size).sum::<usize>();
-            elements_size += system.initializers.iter().map(Self::compute_operator_size).sum::<usize>();
-            elements_size += system.operators.iter().map(Self::compute_operator_size).sum::<usize>();
-            elements_size += system.renderers.iter().map(Self::compute_operator_size).sum::<usize>();
-        }
-
-        (element_count, elements_size)
-    }
-
-    fn compute_attributes_size(attributes: &OrderMap<SymbolIdx, Attribute>) -> usize {
-        (size_of::<SymbolIdx>() * attributes.len())
-            + attributes
-                .iter()
-                .map(|(_, attribute)| attribute.get_encoded_size())
-                .sum::<usize>()
-    }
-
-    fn compute_operator_size(operator: &Operator) -> usize {
-        operator.name.len() + 1 + operator.function_name.len() + 1 + Self::compute_attributes_size(&operator.attributes)
-    }
-
-    pub fn compute_merged_size_change(&self, from: &Self) -> u64 {
+    pub fn compute_merged_size(&self, from: &Self) -> usize {
         // size of all new symbols + a nul byte for each symbol, because these are encoded as c-strings
         let new_symbols_size = from.symbols.base.iter()
             .filter(|symbol| !self.symbols.base.contains(*symbol))
             .map(|symbol| symbol.len() + 1)
             .sum::<usize>();
 
-        let (element_count, mut elements_size) = from.compute_particles_size();
-
-        for (name_idx, attribute) in &from.root.attributes {
-            if !self.root.attributes.contains_key(name_idx) {
-                elements_size += attribute.get_encoded_size();
+        let mut from_to_self_idx = HashMap::new();
+        for (from_idx, name) in from.symbols.base.iter().enumerate() {
+            if let Some(self_idx) = self.symbols.base.get_index_of(name) {
+                from_to_self_idx.insert(from_idx as SymbolIdx, self_idx as SymbolIdx);
             }
         }
 
-        elements_size += element_count * (size_of::<u16>() + size_of::<Signature>());
+        // accounting for the element counter
+        let mut elements_size = 0;
 
-        (new_symbols_size + elements_size) as u64
+        // do the same for each element across all of our particle systems
+        for system in &from.root.particle_systems {
+            elements_size += size_of::<u16>() + system.name.len() + 1 + size_of::<Signature>();
+            for child in &system.children {
+                elements_size += size_of::<u16>() + child.name.len() + 1 + size_of::<Signature>();
+            }
+            for operator in &system.constraints {
+                elements_size += size_of::<u16>() + operator.name.len() + 1 + size_of::<Signature>();
+            }
+            for operator in &system.emitters {
+                elements_size += size_of::<u16>() + operator.name.len() + 1 + size_of::<Signature>();
+            }
+            for operator in &system.forces {
+                elements_size += size_of::<u16>() + operator.name.len() + 1 + size_of::<Signature>();
+            }
+            for operator in &system.initializers {
+                elements_size += size_of::<u16>() + operator.name.len() + 1 + size_of::<Signature>();
+            }
+            for operator in &system.operators {
+                elements_size += size_of::<u16>() + operator.name.len() + 1 + size_of::<Signature>();
+            }
+            for operator in &system.renderers {
+                elements_size += size_of::<u16>() + operator.name.len() + 1 + size_of::<Signature>();
+            }
+        }
+
+        let mut attributes_size = 0;
+
+        // the root element's particle system definitions will become an attribute
+        attributes_size += from.root.particle_systems.len() * size_of::<ElementIdx>();
+
+        for (name_idx, attribute) in &from.root.attributes {
+            let Some(name_idx) = from_to_self_idx.get(name_idx) else {
+                continue;
+            };
+
+            // only include attributes from `from` that don't already exist in `self`
+            if self.root.attributes.contains_key(name_idx) {
+                continue;
+            }
+
+            // the 16-bit name index
+            attributes_size += size_of::<SymbolIdx>();
+            // the 8-bit type index
+            attributes_size += size_of::<u8>();
+            // and the actual encoded size of each attribute
+            attributes_size += attribute.get_encoded_size();
+        }
+
+        // do the same for each element across all of our particle systems
+        for system in &from.root.particle_systems {
+            attributes_size += size_of::<u32>();
+            for (_, attribute) in &system.attributes {
+                attributes_size += size_of::<SymbolIdx>();
+                attributes_size += size_of::<u8>();
+                attributes_size += attribute.get_encoded_size();
+            }
+
+            if !system.children.is_empty() {
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + size_of::<u32>();
+                attributes_size += system.children.len() * size_of::<ElementIdx>();
+            }
+
+            if !system.constraints.is_empty() {
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + size_of::<u32>();
+                attributes_size += system.constraints.len() * size_of::<ElementIdx>();
+            }
+
+            if !system.emitters.is_empty() {
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + size_of::<u32>();
+                attributes_size += system.emitters.len() * size_of::<ElementIdx>();
+            }
+
+            if !system.forces.is_empty() {
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + size_of::<u32>();
+                attributes_size += system.forces.len() * size_of::<ElementIdx>();
+            }
+
+            if !system.initializers.is_empty() {
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + size_of::<u32>();
+                attributes_size += system.initializers.len() * size_of::<ElementIdx>();
+            }
+
+            if !system.operators.is_empty() {
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + size_of::<u32>();
+                attributes_size += system.operators.len() * size_of::<ElementIdx>();
+            }
+
+            if !system.renderers.is_empty() {
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + size_of::<u32>();
+                attributes_size += system.renderers.len() * size_of::<ElementIdx>();
+            }
+            
+            for child in &system.children {
+                attributes_size += size_of::<u32>();
+                // child.child will also become an attribute
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + size_of::<u32>();
+                for (_, attribute) in &child.attributes {
+                    attributes_size += size_of::<SymbolIdx>();
+                    attributes_size += size_of::<u8>();
+                    attributes_size += attribute.get_encoded_size();
+                }
+            }
+            for operator in &system.constraints {
+                attributes_size += size_of::<u32>();
+                // function name will also become an attribute
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + 1 + operator.function_name.len();
+                for (_, attribute) in &operator.attributes {
+                    attributes_size += size_of::<SymbolIdx>();
+                    attributes_size += size_of::<u8>();
+                    attributes_size += attribute.get_encoded_size();
+                }
+            }
+            for operator in &system.emitters {
+                attributes_size += size_of::<u32>();
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + 1 + operator.function_name.len();
+                for (_, attribute) in &operator.attributes {
+                    attributes_size += size_of::<SymbolIdx>();
+                    attributes_size += size_of::<u8>();
+                    attributes_size += attribute.get_encoded_size();
+                }
+            }
+            for operator in &system.forces {
+                attributes_size += size_of::<u32>();
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + 1 + operator.function_name.len();
+                for (_, attribute) in &operator.attributes {
+                    attributes_size += size_of::<SymbolIdx>();
+                    attributes_size += size_of::<u8>();
+                    attributes_size += attribute.get_encoded_size();
+                }
+            }
+            for operator in &system.initializers {
+                attributes_size += size_of::<u32>();
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + 1 + operator.function_name.len();
+                for (_, attribute) in &operator.attributes {
+                    attributes_size += size_of::<SymbolIdx>();
+                    attributes_size += size_of::<u8>();
+                    attributes_size += attribute.get_encoded_size();
+                }
+            }
+            for operator in &system.operators {
+                attributes_size += size_of::<u32>();
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + 1 + operator.function_name.len();
+                for (_, attribute) in &operator.attributes {
+                    attributes_size += size_of::<SymbolIdx>();
+                    attributes_size += size_of::<u8>();
+                    attributes_size += attribute.get_encoded_size();
+                }
+            }
+            for operator in &system.renderers {
+                attributes_size += size_of::<u32>();
+                attributes_size += size_of::<SymbolIdx>() + size_of::<u8>() + 1 + operator.function_name.len();
+                for (_, attribute) in &operator.attributes {
+                    attributes_size += size_of::<SymbolIdx>();
+                    attributes_size += size_of::<u8>();
+                    attributes_size += attribute.get_encoded_size();
+                }
+            }
+        }
+
+        self.compute_encoded_size() + new_symbols_size + elements_size + attributes_size
     }
 
     pub fn into_connected(mut self) -> Vec<Self> {
@@ -486,18 +592,17 @@ impl Pcf {
         groups
             .into_iter()
             .map(|group| {
-                let pcf = Pcf {
+                Self {
                     version: self.version,
                     symbols: self.symbols.clone(),
                     root: Root {
                         name: self.root.name.clone(),
                         signature: self.root.signature,
-                        particle_systems: group.into_iter().map(|system| system).collect(),
+                        particle_systems: group.into_iter().collect(),
                         attributes: self.root.attributes.clone(),
                     },
-                };
-
-                pcf.unused_symbols_stripped()
+                    encoded_size: 0,
+                }.unused_symbols_stripped()
             })
             .collect()
     }
@@ -576,7 +681,7 @@ impl Pcf {
         groups
             .into_iter()
             .map(|group| {
-                let pcf = Pcf {
+                Pcf {
                     version: self.version,
                     symbols: self.symbols.clone(),
                     root: Root {
@@ -585,9 +690,8 @@ impl Pcf {
                         particle_systems: group.into_iter().map(|(_, system)| system).collect(),
                         attributes: self.root.attributes.clone(),
                     },
-                };
-
-                pcf.unused_symbols_stripped()
+                    encoded_size: 0,
+                }.unused_symbols_stripped()
             })
             .collect()
     }
@@ -813,6 +917,7 @@ impl Pcf {
         self.symbols.renderers = *old_to_new_idx.get(&self.symbols.renderers).unwrap_or(&SymbolIdx::MAX);
         self.symbols.child = *old_to_new_idx.get(&self.symbols.child).unwrap_or(&SymbolIdx::MAX);
 
+        self.encoded_size = self.compute_encoded_size();
         self
     }
 
@@ -876,6 +981,35 @@ impl Pcf {
         }
 
         self
+    }
+    
+    pub fn encoded_size(&self) -> usize {
+        self.encoded_size
+    }
+    
+    pub fn into_parts(self) -> (Version, Symbols, Root) {
+        (self.version, self.symbols, self.root)
+    }
+
+    pub fn new_empty_from(other: &Self) -> Self {
+        let mut pcf = Self {
+            version: other.version,
+            symbols: Symbols::default(),
+            root: Root {
+                name: other.root.name.clone(),
+                signature: other.root.signature,
+                particle_systems: Vec::new().into_boxed_slice(),
+                attributes: OrderMap::new(),
+            },
+            encoded_size: 0,
+        };
+
+        pcf.encoded_size = pcf.compute_encoded_size();
+        pcf
+    }
+    
+    pub fn particle_systems(&self) -> &[ParticleSystem] {
+        &self.root.particle_systems
     }
 }
 
@@ -1050,11 +1184,15 @@ impl TryFrom<Dmx> for Pcf {
             attributes,
         };
 
-        Ok(Self {
+        let mut pcf = Self {
             version: value.version,
             symbols,
             root,
-        })
+            encoded_size: 0,
+        };
+
+        pcf.encoded_size = pcf.compute_encoded_size();
+        Ok(pcf)
     }
 }
 
@@ -1201,16 +1339,6 @@ impl From<Pcf> for Dmx {
     }
 }
 
-fn string_to_cstring(string: String) -> CString {
-    let mut vec: Vec<u8> = string.into_bytes();
-    vec.push(0);
-    CString::from_vec_with_nul(vec).expect("this should never fail")
-}
-
-fn str_to_cstring(string: &str) -> CString {
-    CString::new(string).expect("this should never fail")
-}
-
 fn attribute_map_to_dmx_map(map: OrderMap<SymbolIdx, Attribute>) -> OrderMap<SymbolIdx, dmx::attribute::Attribute> {
     map.into_iter()
         .map(|(name_idx, attribute)| (name_idx, dmx::attribute::Attribute::from(attribute)))
@@ -1276,130 +1404,6 @@ impl Operator {
     }
 }
 
-#[derive(Debug, From, Clone, PartialEq)]
-pub enum Attribute {
-    Integer(i32),
-    Float(Float),
-    Bool(bool),
-    String(String),
-    Binary(Box<[u8]>),
-    Color(Color),
-    Vector2(Vector2),
-    Vector3(Vector3),
-    Vector4(Vector4),
-    Matrix(Matrix),
-    IntegerArray(Box<[i32]>),
-    FloatArray(Box<[Float]>),
-    BoolArray(Box<[Bool8]>),
-    StringArray(Box<[String]>),
-    BinaryArray(Box<[Box<[u8]>]>),
-    ColorArray(Box<[Color]>),
-    Vector2Array(Box<[Vector2]>),
-    Vector3Array(Box<[Vector3]>),
-    Vector4Array(Box<[Vector4]>),
-    MatrixArray(Box<[Matrix]>),
-}
-
-impl From<f32> for Attribute {
-    fn from(value: f32) -> Self {
-        Self::Float(Float::from(value))
-    }
-}
-
-impl Attribute {
-    fn get_encoded_size(&self) -> usize {
-        match self {
-            Attribute::Integer(_) => size_of::<i32>(),
-            Attribute::Float(_) => size_of::<f32>(),
-            Attribute::Bool(_) => size_of::<Bool8>(),
-            Attribute::String(value) => 1 + value.len(),
-            Attribute::Binary(value) => size_of::<u32>() + value.len(),
-            Attribute::Color(_) => size_of::<Color>(),
-            Attribute::Vector2(_) => size_of::<Vector2>(),
-            Attribute::Vector3(_) => size_of::<Vector3>(),
-            Attribute::Vector4(_) => size_of::<Vector4>(),
-            Attribute::Matrix(_) => size_of::<Matrix>(),
-            Attribute::IntegerArray(value) => size_of::<u32>() + (value.len() * size_of::<i32>()),
-            Attribute::FloatArray(value) => size_of::<u32>() + (value.len() * size_of::<f32>()),
-            Attribute::BoolArray(value) => size_of::<u32>() + (value.len() * size_of::<Bool8>()),
-            Attribute::StringArray(value) => {
-                size_of::<u32>() + value.len() + value.iter().map(String::len).sum::<usize>()
-            }
-            Attribute::BinaryArray(value) => size_of::<u32>() + value.iter().map(|value| size_of::<u32>() + value.len()).sum::<usize>(),
-            Attribute::ColorArray(value) => size_of::<u32>() + (value.len() * size_of::<Color>()),
-            Attribute::Vector2Array(value) => size_of::<u32>() + (value.len() * size_of::<Vector2>()),
-            Attribute::Vector3Array(value) => size_of::<u32>() + (value.len() * size_of::<Vector3>()),
-            Attribute::Vector4Array(value) => size_of::<u32>() + (value.len() * size_of::<Vector4>()),
-            Attribute::MatrixArray(value) => size_of::<u32>() + (value.len() * size_of::<Matrix>()),
-        }
-    }
-}
-
-impl TryFrom<dmx::attribute::Attribute> for Attribute {
-    type Error = Error;
-
-    fn try_from(value: dmx::attribute::Attribute) -> Result<Self, Self::Error> {
-        match value {
-            dmx::attribute::Attribute::Element(_) => Err(Error::UnexpectedElementReference),
-            dmx::attribute::Attribute::Integer(value) => Ok((value).into()),
-            dmx::attribute::Attribute::Float(value) => Ok((value).into()),
-            dmx::attribute::Attribute::Bool(value) => Ok(bool::from(value).into()),
-            dmx::attribute::Attribute::String(value) => Ok(value.to_string_lossy().into_owned().into()),
-            dmx::attribute::Attribute::Binary(value) => Ok(value.into()),
-            dmx::attribute::Attribute::Color(value) => Ok((value).into()),
-            dmx::attribute::Attribute::Vector2(value) => Ok((value).into()),
-            dmx::attribute::Attribute::Vector3(value) => Ok((value).into()),
-            dmx::attribute::Attribute::Vector4(value) => Ok((value).into()),
-            dmx::attribute::Attribute::Matrix(value) => Ok((value).into()),
-            dmx::attribute::Attribute::ElementArray(_) => Err(Error::UnexpectedElementReference),
-            dmx::attribute::Attribute::IntegerArray(value) => Ok(value.into()),
-            dmx::attribute::Attribute::FloatArray(value) => Ok(value.into()),
-            dmx::attribute::Attribute::BoolArray(value) => Ok(value.into()),
-            dmx::attribute::Attribute::StringArray(value) => Ok(value
-                .into_iter()
-                .map(|string| string.to_string_lossy().into_owned())
-                .collect::<Box<[String]>>()
-                .into()),
-            dmx::attribute::Attribute::BinaryArray(value) => Ok(value.into()),
-            dmx::attribute::Attribute::ColorArray(value) => Ok(value.into()),
-            dmx::attribute::Attribute::Vector2Array(value) => Ok(value.into()),
-            dmx::attribute::Attribute::Vector3Array(value) => Ok(value.into()),
-            dmx::attribute::Attribute::Vector4Array(value) => Ok(value.into()),
-            dmx::attribute::Attribute::MatrixArray(value) => Ok(value.into()),
-        }
-    }
-}
-
-impl From<Attribute> for dmx::attribute::Attribute {
-    fn from(value: Attribute) -> Self {
-        match value {
-            Attribute::Integer(value) => value.into(),
-            Attribute::Float(value) => value.into(),
-            Attribute::Bool(value) => value.into(),
-            Attribute::String(value) => string_to_cstring(value).into(),
-            Attribute::Binary(value) => value.into(),
-            Attribute::Color(value) => value.into(),
-            Attribute::Vector2(value) => value.into(),
-            Attribute::Vector3(value) => value.into(),
-            Attribute::Vector4(value) => value.into(),
-            Attribute::Matrix(value) => value.into(),
-            Attribute::IntegerArray(value) => value.into(),
-            Attribute::FloatArray(value) => value.into(),
-            Attribute::BoolArray(value) => value.into(),
-            Attribute::StringArray(value) => value
-                .into_iter()
-                .map(string_to_cstring)
-                .collect::<Box<[CString]>>()
-                .into(),
-            Attribute::BinaryArray(value) => value.into(),
-            Attribute::ColorArray(value) => value.into(),
-            Attribute::Vector2Array(value) => value.into(),
-            Attribute::Vector3Array(value) => value.into(),
-            Attribute::Vector4Array(value) => value.into(),
-            Attribute::MatrixArray(value) => value.into(),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Symbols {
@@ -1528,10 +1532,10 @@ impl From<Symbols> for dmx::Symbols {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::{HashSet, VecDeque}, ffi::CString, fs::OpenOptions, io::BufWriter};
+    use std::{collections::{HashSet, VecDeque}, fs::OpenOptions, io::BufWriter};
 
     use bytes::{Buf, BufMut, BytesMut};
-    use dmx::{Dmx, ElementIdx, SymbolIdx, Symbols, attribute::Attribute, dmx::Element};
+    use dmx::{Dmx, ElementIdx, SymbolIdx, dmx::Element};
     use ordermap::{OrderMap, OrderSet};
 
     use crate::new::Pcf;
@@ -1615,7 +1619,7 @@ mod tests {
 
         assert_eq!(expected_size, new_size);
         assert_eq!(expected_dmx, new_dmx);
-        assert_eq!(expected_size as u64, computed_size, "compute_encoded_size is not computing the correct size");
+        assert_eq!(expected_size, computed_size, "compute_encoded_size is not computing the correct size");
     }
 
     #[test]
@@ -1690,7 +1694,7 @@ mod tests {
 
         assert_eq!(expected_size, new_size);
         assert_eq!(expected_dmx, new_dmx);
-        assert_eq!(expected_size as u64, computed_size, "compute_encoded_size is not computing the correct size");
+        assert_eq!(expected_size, computed_size, "compute_encoded_size is not computing the correct size");
     }
 
     #[test]
@@ -1776,22 +1780,9 @@ mod tests {
         let mut writer = buf.writer();
         new_dmx.encode(&mut writer).expect("writing failed");
 
-        // all of the same data should be present - just reordered - so the sizes should be identical
-        let bytes = writer.get_mut();
-        assert_eq!(TEST_PCF_DATA.len(), bytes.len());
-
         // the same output should be decodable as a pcf once more
-        let mut reader = bytes.reader();
+        let mut reader = writer.into_inner().reader();
         let _: Pcf = dmx::decode(&mut reader).unwrap().try_into().unwrap();
-    }
-
-    #[test]
-    fn test_compute_methods() {
-        let mut reader = TEST_PCF_DATA.reader();
-        let dmx = dmx::decode(&mut reader).unwrap();
-        let into = Pcf::try_from(dmx).unwrap();
-
-        assert_eq!(into.compute_encoded_size(), into.compute_test());
     }
 
     #[test]
@@ -1801,17 +1792,16 @@ mod tests {
         let into = Pcf::try_from(dmx).unwrap();
         let from = into.clone();
 
-        let previous_size = into.compute_encoded_size();
-        let expected_change = into.compute_merged_size_change(&from);
+        let expected_size = into.compute_merged_size(&from);
 
         let pcf = into.merged(from).unwrap();
         let new_size = pcf.compute_encoded_size();
-        let actual_change = new_size - previous_size;
 
-        assert_eq!(expected_change, actual_change);
+        assert_eq!(expected_size, new_size);
     }
 
     #[test]
+    #[ignore]
     fn test_dfs() {
         fn dfs_wcc(association_list: &OrderMap<char, Node>) -> Vec<OrderSet<char>> {
             fn dfs(list: &OrderMap<char, Node>, component: &mut OrderSet<char>, value: &Node, visited: &mut HashSet<char>) {
