@@ -34,6 +34,12 @@ pub enum Attribute {
     MatrixArray(Box<[Matrix]>),
 }
 
+impl<const N: usize> From<[ElementIdx; N]> for Attribute {
+    fn from(value: [ElementIdx; N]) -> Self {
+        Self::ElementArray(Box::new(value) as Box<[ElementIdx]>)
+    }
+}
+
 impl From<f32> for Attribute {
     fn from(value: f32) -> Self {
         Self::Float(value.into())
@@ -85,6 +91,10 @@ impl Attribute {
             Attribute::MatrixArray(_) => 28,
         }
     }
+    
+    pub fn is_empty_element_array(&self) -> bool {
+        matches!(self, Attribute::ElementArray(items) if items.is_empty())
+    }
 }
 
 pub trait ReadAttribute: Sized {
@@ -95,9 +105,6 @@ pub trait ReadAttribute: Sized {
 pub trait WriteAttribute: Sized {
     type Err: From<io::Error> = io::Error;
     fn write_attribute(&self, writer: &mut impl io::Write) -> Result<(), Self::Err>;
-    fn encoded_size(&self) -> usize {
-        size_of::<Self>()
-    }
 }
 
 impl ReadAttribute for u32 {
@@ -167,10 +174,6 @@ impl WriteAttribute for CString {
     fn write_attribute(&self, writer: &mut impl io::Write) -> Result<(), Self::Err> {
         writer.write_all(self.as_bytes_with_nul())
     }
-
-    fn encoded_size(&self) -> usize {
-        self.as_bytes_with_nul().len()
-    }
 }
 
 impl ReadAttribute for Box<[u8]> {
@@ -187,10 +190,6 @@ impl WriteAttribute for Box<[u8]> {
     fn write_attribute(&self, writer: &mut impl io::Write) -> Result<(), Self::Err> {
         writer.write_u32::<LittleEndian>(self.len() as u32)?;
         writer.write_all(self)
-    }
-
-    fn encoded_size(&self) -> usize {
-        self.len()
     }
 }
 

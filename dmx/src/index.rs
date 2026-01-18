@@ -19,13 +19,13 @@ impl ElementIdx {
 
 impl From<usize> for ElementIdx {
     fn from(value: usize) -> Self {
-        ElementIdx(value as u32 + 1)
+        ElementIdx(value as u32)
     }
 }
 
 impl From<ElementIdx> for usize {
     fn from(value: ElementIdx) -> Self {
-        value.0 as usize - 1
+        value.0 as usize
     }
 }
 
