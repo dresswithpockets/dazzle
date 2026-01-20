@@ -7,17 +7,22 @@ license = "Apache-2.0"
 
 [workspace]
 default-members = [ ".", ]
-members = [ ".", "dmx", "pcf", "nanoserde" , "tools/pcftree"]
+members = [ ".", "dmx", "pcf", "nanoserde" , "tools/pcftree", "tools/pcfstrip"]
 
 [features]
 default = []
 split_item_fx_pcf = []
+
+[profile.profiling]
+inherits = "release"
+debug = true
 
 [dependencies]
 anyhow = "1.0"
 byteorder = "1.5"
 bytes = "1.11"
 buf_read_write = "0.5"
+dmx = { path = "dmx" }
 pcf = { version = "0.1.0", path = "pcf" }
 copy_dir = "0.1"
 vpk = "0.3"
@@ -35,6 +40,7 @@ keyvalues-parser = "0.2"
 hashbrown = "0.16"
 crc32fast = "1.5"
 md-5 = "0.10"
+rayon = "1.11"
 
 [build-dependencies]
 copy_to_output = "2.2.0"

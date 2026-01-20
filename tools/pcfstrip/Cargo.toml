@@ -1,0 +1,17 @@
+[package]
+name = "pcfstrip"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+byteorder = "1.5"
+bytes = "1.11"
+buf_read_write = "0.5"
+dmx = { path = "../../dmx" }
+glob = "0.3"
+hex_fmt = "0.3"
+pcf = { path = "../../pcf" }
+relative-path = "2.0"
+thiserror = "2.0"
+vpk = "0.3"
