@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+dmx = { path = "../../dmx" }
 pcf = { path = "../../pcf" }
 hex_fmt = "0.3"
 ptree = "0.5"
