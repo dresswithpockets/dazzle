@@ -1,19 +1,17 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     ffi::{CStr, CString},
     mem,
 };
 
-use derive_more::From;
 use dmx::{
     ElementIdx, Signature,
     dmx::{Dmx, Element, Version},
 };
 use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
+use petgraph::{algo::tarjan_scc, prelude::UnGraphMap};
 use thiserror::Error;
-
-use dmx::attribute::{Bool8, Color, Float, Matrix, Vector2, Vector3, Vector4};
 
 use crate::{
     attribute::Attribute,
@@ -42,6 +40,22 @@ pub struct Root {
 impl Root {
     pub fn into_parts(self) -> (String, Signature, Box<[ParticleSystem]>, OrderMap<SymbolIdx, Attribute>) {
         (self.name, self.signature, self.particle_systems, self.attributes)
+    }
+    
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    
+    pub fn signature(&self) -> Signature {
+        self.signature
+    }
+    
+    pub fn particle_systems(&self) -> &[ParticleSystem] {
+        &self.particle_systems
+    }
+    
+    pub fn attributes(&self) -> &OrderMap<SymbolIdx, Attribute> {
+        &self.attributes
     }
 }
 
@@ -99,23 +113,38 @@ pub enum MergeError {
 }
 
 impl Pcf {
+    pub fn version(&self) -> Version {
+        self.version
+    }
+
+    pub fn symbols(&self) -> &Symbols {
+        &self.symbols
+    }
+
+    pub fn root(&self) -> &Root {
+        &self.root
+    }
+
     pub fn merged_in(&mut self, from: &mut Self) -> Result<(), MergeError> {
         *self = mem::take(self).merged(mem::take(from))?;
         Ok(())
     }
 
     pub fn merged(self, from: Self) -> Result<Self, MergeError> {
-        fn reindex_new_attribute(
+        fn reindex_new_attributes(
             old_to_new_string_idx: &HashMap<u16, u16>,
-            name_idx: SymbolIdx,
-            attribute: Attribute,
-        ) -> (SymbolIdx, Attribute) {
-            let name_idx = old_to_new_string_idx
-                .get(&name_idx)
-                .copied()
-                .expect("the attribute's name_idx should always match a value in the Pcf's string list");
+            attributes: OrderMap<SymbolIdx, Attribute>,
+        ) -> impl Iterator<Item = (u16, Attribute)>  {
+            attributes
+                .into_iter()
+                .map(|(name_idx, attribute)| {
+                    let name_idx = old_to_new_string_idx
+                        .get(&name_idx)
+                        .copied()
+                        .expect("the attribute's name_idx should always match a value in the Pcf's string list");
 
-            (name_idx, attribute)
+                    (name_idx, attribute)
+                })
         }
 
         if self.version != from.version {
@@ -135,12 +164,27 @@ impl Pcf {
             old_to_new_string_idx.insert(from_idx as SymbolIdx, mapped_idx as SymbolIdx);
         }
 
+        fn find_idx(from: &Symbols, value: &str) -> Option<SymbolIdx> {
+            from.base.iter()
+                .find_position(|el| *el == value)
+                .map(|(idx, _)| idx as SymbolIdx)
+        }
+
+        symbols.particle_child = find_idx(&symbols, "DmeParticleChild");
+        symbols.particle_operator = find_idx(&symbols, "DmeParticleOperator");
+        symbols.function_name = find_idx(&symbols, "functionName");
+        symbols.children = find_idx(&symbols, "children");
+        symbols.constraints = find_idx(&symbols, "constraints");
+        symbols.emitters = find_idx(&symbols, "emitters");
+        symbols.forces = find_idx(&symbols, "forces");
+        symbols.initializers = find_idx(&symbols, "initializers");
+        symbols.operators = find_idx(&symbols, "operators");
+        symbols.renderers = find_idx(&symbols, "renderers");
+        symbols.child = find_idx(&symbols, "child");
+
         let mut root_attributes = self.root.attributes;
         root_attributes.extend(
-            from.root
-                .attributes
-                .into_iter()
-                .map(|(name_idx, attribute)| reindex_new_attribute(&old_to_new_string_idx, name_idx, attribute)),
+            reindex_new_attributes(&old_to_new_string_idx, from.root.attributes),
         );
 
         let mut particle_systems = Vec::from(self.root.particle_systems);
@@ -149,13 +193,34 @@ impl Pcf {
         for mut new_system in from.root.particle_systems {
             for child in &mut new_system.children {
                 child.child += system_offset;
+                child.attributes = reindex_new_attributes(&old_to_new_string_idx, mem::take(&mut child.attributes)).collect();
             }
 
-            new_system.attributes = new_system
-                .attributes
-                .into_iter()
-                .map(|(name_idx, attribute)| reindex_new_attribute(&old_to_new_string_idx, name_idx, attribute))
-                .collect();
+            for operator in &mut new_system.constraints {
+                operator.attributes = reindex_new_attributes(&old_to_new_string_idx, mem::take(&mut operator.attributes)).collect();
+            }
+
+            for operator in &mut new_system.emitters {
+                operator.attributes = reindex_new_attributes(&old_to_new_string_idx, mem::take(&mut operator.attributes)).collect();
+            }
+
+            for operator in &mut new_system.forces {
+                operator.attributes = reindex_new_attributes(&old_to_new_string_idx, mem::take(&mut operator.attributes)).collect();
+            }
+
+            for operator in &mut new_system.initializers {
+                operator.attributes = reindex_new_attributes(&old_to_new_string_idx, mem::take(&mut operator.attributes)).collect();
+            }
+
+            for operator in &mut new_system.operators {
+                operator.attributes = reindex_new_attributes(&old_to_new_string_idx, mem::take(&mut operator.attributes)).collect();
+            }
+
+            for operator in &mut new_system.renderers {
+                operator.attributes = reindex_new_attributes(&old_to_new_string_idx, mem::take(&mut operator.attributes)).collect();
+            }
+
+            new_system.attributes = reindex_new_attributes(&old_to_new_string_idx, new_system.attributes).collect();
 
             particle_systems.push(new_system);
         }
@@ -536,59 +601,71 @@ impl Pcf {
         self.compute_encoded_size() + new_symbols_size + elements_size + attributes_size
     }
 
+    /// Consumes the [`Pcf`], splitting it up into multiple [`Pcf`]s. Each [`Pcf`] will only contain
+    /// [`ParticleSystem`]s that are connected (such as by a via [`Child`] link).
+    ///
+    /// Each [`ParticleSystem`] from the original [`Pcf`] will only show up once.
+    ///
+    /// Unused symbols are also stripped from each [`Pcf`], to ensure it only contains the bare minimum necessary to be
+    /// a valid [`Pcf`].
     pub fn into_connected(mut self) -> Vec<Self> {
-        fn bfs(graph: &HashMap<ElementIdx, Vec<ElementIdx>>) -> Vec<Vec<ElementIdx>> {
-            let mut visited = OrderSet::new();
-            let mut components = Vec::new();
+        // fn bfs(graph: &HashMap<ElementIdx, Vec<ElementIdx>>) -> Vec<Vec<ElementIdx>> {
+        //     let mut visited = OrderSet::new();
+        //     let mut components = Vec::new();
 
-            for start in graph.keys() {
-                if !visited.insert(*start) {
-                    continue;
-                }
+        //     for start in graph.keys() {
+        //         if !visited.insert(*start) {
+        //             continue;
+        //         }
 
-                let mut component = Vec::new();
-                let mut queue = VecDeque::from([*start]);
+        //         let mut component = Vec::new();
+        //         let mut queue = VecDeque::from([*start]);
 
-                while let Some(value) = queue.pop_front() {
-                    component.push(value);
-                    for child in graph.get(&value).unwrap() {
-                        if visited.insert(*child) {
-                            queue.push_back(*child);
-                        }
-                    }
-                }
+        //         while let Some(value) = queue.pop_front() {
+        //             component.push(value);
+        //             for child in graph.get(&value).unwrap() {
+        //                 if visited.insert(*child) {
+        //                     queue.push_back(*child);
+        //                 }
+        //             }
+        //         }
 
-                components.push(component);
-            }
+        //         components.push(component);
+        //     }
 
-            components
+        //     components
+        // }
+
+        
+        let mut graph: UnGraphMap<ElementIdx, ()> = UnGraphMap::new();
+        for (system_idx, _) in self.root.particle_systems.iter().enumerate() {
+            graph.add_node(system_idx.into());
         }
 
-        // to get our WCCs we need to convert the PCF into an undirected graph, for BFS.
-        let mut graph: HashMap<ElementIdx, Vec<ElementIdx>> = HashMap::new();
         for (system_idx, particle_system) in self.root.particle_systems.iter().enumerate() {
-            let members = graph.entry(system_idx.into()).or_default();
-            members.extend(particle_system.children.iter().map(|child| child.child));
-        }
-
-        for (system_idx, particle_system) in self.root.particle_systems.iter().enumerate() {
-            for child in &particle_system.children {
-                let members = graph.entry(child.child).or_default();
-                members.push(system_idx.into());
+            for child in particle_system.children.iter() {
+                graph.add_edge(system_idx.into(), child.child, ());
             }
         }
 
+        let mut components = tarjan_scc(&graph);
+        
+        // tarjan_scc results in reversed element groups, so we unreverse it here
+        components.reverse();
         let mut groups = Vec::new();
-        let graphs = bfs(&graph);
-        for graph in graphs {
-            let old_to_new_idx: HashMap<_, _> = graph
+        for mut component in components {
+
+            // tarjan_scc results in reversed element indices in each group, so we unreverse it here
+            component.reverse();
+
+            let old_to_new_idx: HashMap<_, _> = component
                 .iter()
                 .enumerate()
                 .map(|(new_idx, old_idx)| (*old_idx, ElementIdx::from(new_idx)))
                 .collect();
 
             let mut group = Vec::new();
-            for system_idx in graph {
+            for system_idx in component {
                 let mut system = mem::take(&mut self.root.particle_systems[usize::from(system_idx)]);
                 for child in &mut system.children {
                     child.child = old_to_new_idx[&child.child];
@@ -610,100 +687,6 @@ impl Pcf {
                         name: self.root.name.clone(),
                         signature: self.root.signature,
                         particle_systems: group.into_iter().collect(),
-                        attributes: self.root.attributes.clone(),
-                    },
-                    encoded_size: 0,
-                }
-                .unused_symbols_stripped()
-            })
-            .collect()
-    }
-
-    /// Consumes the [`Pcf`], splitting it up into multiple [`Pcf`]s. Each [`Pcf`] will only contain
-    /// [`ParticleSystem`]s that are connected (such as by a via [`Child`] link).
-    ///
-    /// Each [`ParticleSystem`] from the original [`Pcf`] will only show up once.
-    ///
-    /// Unused symbols are also stripped from each [`Pcf`], to ensure it only contains the bare minimum necessary to be
-    /// a valid [`Pcf`].
-    pub fn into_connected_pcfs(self) -> Vec<Self> {
-        let mut groups = Vec::new();
-        let mut system_to_group_idx: HashMap<ElementIdx, usize> = HashMap::new();
-
-        for (system_idx, particle_system) in self.root.particle_systems.into_iter().enumerate() {
-            let related_groups: Vec<_> = particle_system
-                .children
-                .iter()
-                .filter_map(|child| {
-                    system_to_group_idx
-                        .get(&child.child)
-                        .map(|group_idx| (child.child, *group_idx))
-                })
-                .collect();
-
-            if related_groups.is_empty() {
-                // there are no related groups, so we don't need to merge anything, and should create a new group
-                groups.push(vec![(system_idx, particle_system)]);
-                system_to_group_idx.insert(system_idx.into(), groups.len() - 1);
-            } else {
-                // we've got some related groups, so we need to merge them all together, and add our particle system to the group
-                let (indices_to_remap, group_indices): (Vec<_>, Vec<_>) = related_groups.into_iter().unzip();
-
-                let mut groups_to_merge = Vec::with_capacity(group_indices.len() + 1);
-                groups_to_merge.push(vec![(system_idx, particle_system)]);
-                for group_idx in group_indices {
-                    // we mem::take to ensure that indices in system_to_group_idx are still valid later
-                    groups_to_merge.push(mem::take(&mut groups[group_idx]));
-                }
-
-                // ensure old group_idx in the map point to the newly merged group
-                for idx_to_remap in indices_to_remap {
-                    system_to_group_idx.insert(idx_to_remap, groups.len());
-                }
-
-                groups.push(groups_to_merge.into_iter().concat());
-            }
-        }
-
-        let mut groups: Vec<_> = system_to_group_idx
-            .into_values()
-            .unique()
-            .map(|group_idx| mem::take(&mut groups[group_idx]))
-            .collect();
-
-        // at this point each group should only contain related particle systems. Now we need to fix child indices
-        for group in &mut groups {
-            let (old_to_new_idx, mut particle_systems): (HashMap<_, _>, Vec<_>) = group
-                .iter_mut()
-                .enumerate()
-                .map(|(new_idx, (old_idx, particle_system))| {
-                    ((ElementIdx::from(*old_idx), ElementIdx::from(new_idx)), particle_system)
-                })
-                .unzip();
-
-            for particle_system in &mut particle_systems {
-                for child in &mut particle_system.children {
-                    if !child.child.is_valid() {
-                        continue;
-                    }
-
-                    child.child = *old_to_new_idx
-                        .get(&child.child)
-                        .expect("old indices should always be in the old_to_new_idx map")
-                }
-            }
-        }
-
-        groups
-            .into_iter()
-            .map(|group| {
-                Pcf {
-                    version: self.version,
-                    symbols: self.symbols.clone(),
-                    root: Root {
-                        name: self.root.name.clone(),
-                        signature: self.root.signature,
-                        particle_systems: group.into_iter().map(|(_, system)| system).collect(),
                         attributes: self.root.attributes.clone(),
                     },
                     encoded_size: 0,
@@ -805,38 +788,38 @@ impl Pcf {
         }
 
         if has_child {
-            used_symbols.insert(self.symbols.child);
-            used_symbols.insert(self.symbols.particle_child);
-            used_symbols.insert(self.symbols.children);
+            used_symbols.insert(self.symbols.child.expect("the child symbol index is unassigned despite the Pcf having a child"));
+            used_symbols.insert(self.symbols.particle_child.expect("the particle child symbol index is unassigned despite the Pcf having a child"));
+            used_symbols.insert(self.symbols.children.expect("the children symbol index is unassigned despite the Pcf having a child"));
         }
 
         if has_constraint || has_emitter || has_force || has_initializer || has_operator || has_renderer {
-            used_symbols.insert(self.symbols.particle_operator);
-            used_symbols.insert(self.symbols.function_name);
+            used_symbols.insert(self.symbols.particle_operator.expect("the particle operator symbol index is unassigned despite the Pcf having an operator"));
+            used_symbols.insert(self.symbols.function_name.expect("the function name symbol index is unassigned despite the Pcf having an operator"));
         }
 
         if has_constraint {
-            used_symbols.insert(self.symbols.operators);
+            used_symbols.insert(self.symbols.constraints.expect("the constraints symbol index is unassigned despite the Pcf having a constraints"));
         }
 
         if has_emitter {
-            used_symbols.insert(self.symbols.emitters);
+            used_symbols.insert(self.symbols.emitters.expect("the emitters symbol index is unassigned despite the Pcf having a emitters"));
         }
 
         if has_emitter {
-            used_symbols.insert(self.symbols.forces);
+            used_symbols.insert(self.symbols.forces.expect("the forces symbol index is unassigned despite the Pcf having a forces"));
         }
 
         if has_emitter {
-            used_symbols.insert(self.symbols.initializers);
+            used_symbols.insert(self.symbols.initializers.expect("the initializers symbol index is unassigned despite the Pcf having a initializers"));
         }
 
         if has_emitter {
-            used_symbols.insert(self.symbols.operators);
+            used_symbols.insert(self.symbols.operators.expect("the operators symbol index is unassigned despite the Pcf having a operators"));
         }
 
         if has_emitter {
-            used_symbols.insert(self.symbols.renderers);
+            used_symbols.insert(self.symbols.renderers.expect("the renderers symbol index is unassigned despite the Pcf having a renderers"));
         }
 
         let old_symbols = mem::replace(&mut self.symbols.base, OrderSet::new());
@@ -914,27 +897,106 @@ impl Pcf {
         self.symbols.particle_system_definition = *old_to_new_idx
             .get(&self.symbols.particle_system_definition)
             .expect("this should always be present in the map");
-        self.symbols.particle_child = *old_to_new_idx
-            .get(&self.symbols.particle_child)
-            .unwrap_or(&SymbolIdx::MAX);
-        self.symbols.particle_operator = *old_to_new_idx
-            .get(&self.symbols.particle_operator)
-            .unwrap_or(&SymbolIdx::MAX);
-        self.symbols.function_name = *old_to_new_idx
-            .get(&self.symbols.function_name)
-            .unwrap_or(&SymbolIdx::MAX);
-        self.symbols.children = *old_to_new_idx.get(&self.symbols.children).unwrap_or(&SymbolIdx::MAX);
-        self.symbols.constraints = *old_to_new_idx.get(&self.symbols.constraints).unwrap_or(&SymbolIdx::MAX);
-        self.symbols.emitters = *old_to_new_idx.get(&self.symbols.emitters).unwrap_or(&SymbolIdx::MAX);
-        self.symbols.forces = *old_to_new_idx.get(&self.symbols.forces).unwrap_or(&SymbolIdx::MAX);
-        self.symbols.initializers = *old_to_new_idx
-            .get(&self.symbols.initializers)
-            .unwrap_or(&SymbolIdx::MAX);
-        self.symbols.operators = *old_to_new_idx.get(&self.symbols.operators).unwrap_or(&SymbolIdx::MAX);
-        self.symbols.renderers = *old_to_new_idx.get(&self.symbols.renderers).unwrap_or(&SymbolIdx::MAX);
-        self.symbols.child = *old_to_new_idx.get(&self.symbols.child).unwrap_or(&SymbolIdx::MAX);
+        self.symbols.particle_child = self.symbols.particle_child.and_then(|idx| old_to_new_idx.get(&idx).cloned());
+        self.symbols.particle_operator = self.symbols.particle_operator.and_then(|idx| old_to_new_idx.get(&idx).cloned());
+        self.symbols.function_name = self.symbols.function_name.and_then(|idx| old_to_new_idx.get(&idx).cloned());
+        self.symbols.children = self.symbols.children.and_then(|idx| old_to_new_idx.get(&idx).cloned());
+        self.symbols.constraints = self.symbols.constraints.and_then(|idx| old_to_new_idx.get(&idx).cloned());
+        self.symbols.emitters = self.symbols.emitters.and_then(|idx| old_to_new_idx.get(&idx).cloned());
+        self.symbols.forces = self.symbols.forces.and_then(|idx| old_to_new_idx.get(&idx).cloned());
+        self.symbols.initializers = self.symbols.initializers.and_then(|idx| old_to_new_idx.get(&idx).cloned());
+        self.symbols.operators = self.symbols.operators.and_then(|idx| old_to_new_idx.get(&idx).cloned());
+        self.symbols.renderers = self.symbols.renderers.and_then(|idx| old_to_new_idx.get(&idx).cloned());
+        self.symbols.child = self.symbols.child.and_then(|idx| old_to_new_idx.get(&idx).cloned());
 
         self.encoded_size = self.compute_encoded_size();
+        self
+    }
+
+    pub fn defaults_stripped_nth(
+        mut self,
+        to: usize,
+        particle_defaults: &HashMap<&str, Attribute>,
+        operator_defaults: &HashMap<&str, Attribute>,
+    ) -> Self {
+        fn remove_operator_defaults(op: &mut Operator, defaults: &HashMap<SymbolIdx, &Attribute>) {
+            op.attributes = mem::take(&mut op.attributes)
+                .into_iter()
+                .filter(|(name_idx, attribute)| {
+                    if let Some(default) = defaults.get(name_idx)
+                        && attribute == *default
+                    {
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .collect();
+        }
+
+        let particle_defaults: HashMap<_, _> = particle_defaults
+            .iter()
+            .filter_map(|(name, value)| {
+                self.symbols
+                    .base
+                    .iter()
+                    .position(|s| s == name)
+                    .map(|idx| (idx as SymbolIdx, value))
+            })
+            .collect();
+
+        let operator_defaults: HashMap<_, _> = operator_defaults
+            .iter()
+            .filter_map(|(attribute_name, attribute)| {
+                let name_idx = self.symbols.base.get_index_of(*attribute_name)? as SymbolIdx;
+                Some((name_idx, attribute))
+            })
+            .collect();
+
+        for (idx, system) in self.root.particle_systems.iter_mut().enumerate() {
+            if idx >= to {
+                break;
+            }
+
+            system.attributes = mem::take(&mut system.attributes)
+                .into_iter()
+                .filter(|(name_idx, attribute)| {
+                    if let Some(default) = particle_defaults.get(name_idx)
+                        && attribute == *default
+                    {
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .collect();
+
+            system
+                .constraints
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
+            system
+                .emitters
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
+            system
+                .forces
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
+            system
+                .initializers
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
+            system
+                .operators
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
+            system
+                .renderers
+                .iter_mut()
+                .for_each(|op| remove_operator_defaults(op, &operator_defaults));
+        }
+
         self
     }
 
@@ -1120,21 +1182,18 @@ impl TryFrom<Dmx> for Pcf {
 
             for (name_idx, attribute) in &element.attributes {
                 if let dmx::attribute::Attribute::ElementArray(element_indices) = attribute {
-                    if *name_idx == symbols.children {
+                    if symbols.children.is_some_and(|idx| *name_idx == idx) {
                         for child_element_idx in element_indices {
                             let child_element = value
                                 .elements
                                 .get(usize::from(*child_element_idx))
                                 .ok_or(Error::MissingParticleChild(*child_element_idx))?;
 
-                            if child_element.type_idx != symbols.particle_child {
+                            if symbols.particle_child.is_none_or(|idx| child_element.type_idx != idx) {
                                 return Err(Error::InvalidParticleChild(*child_element_idx));
                             }
 
-                            let child_attribute = child_element
-                                .attributes
-                                .get(&symbols.child)
-                                .ok_or(Error::MissingChild)?;
+                            let child_attribute = symbols.child.and_then(|idx| child_element.attributes.get(&idx)).ok_or(Error::MissingChild)?;
                             let dmx::attribute::Attribute::Element(child_system_idx) = child_attribute else {
                                 return Err(Error::MissingChild);
                             };
@@ -1145,7 +1204,7 @@ impl TryFrom<Dmx> for Pcf {
 
                             let mut attributes = OrderMap::new();
                             for (name_idx, attribute) in &child_element.attributes {
-                                if *name_idx == symbols.child {
+                                if symbols.child.is_some_and(|idx| *name_idx == idx) {
                                     continue;
                                 }
 
@@ -1167,17 +1226,17 @@ impl TryFrom<Dmx> for Pcf {
                         continue;
                     }
 
-                    let dme_operators = if *name_idx == symbols.constraints {
+                    let dme_operators = if symbols.constraints.is_some_and(|idx| *name_idx == idx) {
                         &mut constraints
-                    } else if *name_idx == symbols.emitters {
+                    } else if symbols.emitters.is_some_and(|idx| *name_idx == idx) {
                         &mut emitters
-                    } else if *name_idx == symbols.forces {
+                    } else if symbols.forces.is_some_and(|idx| *name_idx == idx) {
                         &mut forces
-                    } else if *name_idx == symbols.initializers {
+                    } else if symbols.initializers.is_some_and(|idx| *name_idx == idx) {
                         &mut initializers
-                    } else if *name_idx == symbols.operators {
+                    } else if symbols.operators.is_some_and(|idx| *name_idx == idx) {
                         &mut operators
-                    } else if *name_idx == symbols.renderers {
+                    } else if symbols.renderers.is_some_and(|idx| *name_idx == idx) {
                         &mut renderers
                     } else {
                         return Err(Error::UnexpectedElementReference);
@@ -1189,7 +1248,7 @@ impl TryFrom<Dmx> for Pcf {
                             .get(usize::from(*element_idx))
                             .ok_or(Error::MissingOperator(*element_idx))?;
 
-                        if element.type_idx != symbols.particle_operator {
+                        if symbols.particle_operator.is_none_or(|idx| element.type_idx != idx) {
                             return Err(Error::InvalidParticleOperator(*element_idx));
                         }
 
@@ -1250,27 +1309,34 @@ impl From<Pcf> for Dmx {
             indices: &mut Vec<ElementIdx>,
             symbols: &Symbols,
         ) {
-            for operator in operators {
-                let mut attributes = attribute_map_to_dmx_map(operator.attributes);
-                attributes.insert(symbols.function_name, string_to_cstring(operator.function_name).into());
+            if !operators.is_empty() {
+                let function_name_idx = symbols.function_name.expect("function name symbol idx not set despite having operators in dmx");
+                let particle_operator_idx = symbols.particle_operator.expect("particle operator symbol idx not set despite having operators in dmx");
+                for operator in operators {
+                    let mut attributes = attribute_map_to_dmx_map(operator.attributes);
+                    attributes.insert(function_name_idx, string_to_cstring(operator.function_name).into());
 
-                indices.push(ElementIdx::from(elements.len()));
-                elements.push(Element {
-                    type_idx: symbols.particle_operator,
-                    name: string_to_cstring(operator.name),
-                    signature: operator.signature,
-                    attributes,
-                })
+                    indices.push(ElementIdx::from(elements.len()));
+                    elements.push(Element {
+                        type_idx: particle_operator_idx,
+                        name: string_to_cstring(operator.name),
+                        signature: operator.signature,
+                        attributes,
+                    })
+                }
             }
         }
 
         fn push_index_attribute(
             indices: Vec<ElementIdx>,
-            key: SymbolIdx,
+            key: Option<SymbolIdx>,
             attributes: &mut OrderMap<SymbolIdx, dmx::attribute::Attribute>,
         ) {
             if !indices.is_empty() {
-                attributes.insert(key, indices.into_boxed_slice().into());
+                attributes.insert(
+                    key.expect("key should be set if the indices vec is not empty"),
+                    indices.into_boxed_slice().into()
+                );
             }
         }
 
@@ -1308,22 +1374,26 @@ impl From<Pcf> for Dmx {
             let mut operator_indices = Vec::new();
             let mut renderer_indices = Vec::new();
 
-            for child in particle_system.children {
-                child_indices.push(ElementIdx::from(elements.len()));
+            if !particle_system.children.is_empty() {
+                let child_idx = pcf.symbols.child.expect("particle child symbol idx not set despite having children in dmx");
+                let particle_child_idx = pcf.symbols.particle_child.expect("particle child symbol idx not set despite having children in dmx");
+                for child in particle_system.children {
+                    child_indices.push(ElementIdx::from(elements.len()));
 
-                let mut attributes = attribute_map_to_dmx_map(child.attributes);
+                    let mut attributes = attribute_map_to_dmx_map(child.attributes);
 
-                // child.child indexes into value.root.particle_systems, but we insert particle system defintiions
-                // into `elements` before any others, so this index is still correct in our new elements list
-                // except we have to offset by 1 to account for the root element we add earlier.
-                attributes.insert(pcf.symbols.child, dmx::attribute::Attribute::Element(child.child + 1));
+                    // child.child indexes into value.root.particle_systems, but we insert particle system defintiions
+                    // into `elements` before any others, so this index is still correct in our new elements list
+                    // except we have to offset by 1 to account for the root element we add earlier.
+                    attributes.insert(child_idx, dmx::attribute::Attribute::Element(child.child + 1));
 
-                elements.push(Element {
-                    type_idx: pcf.symbols.particle_child,
-                    name: string_to_cstring(child.name),
-                    signature: child.signature,
-                    attributes,
-                })
+                    elements.push(Element {
+                        type_idx: particle_child_idx,
+                        name: string_to_cstring(child.name),
+                        signature: child.signature,
+                        attributes,
+                    })
+                }
             }
 
             push_operators(
@@ -1417,10 +1487,7 @@ pub struct Operator {
 
 impl Operator {
     fn try_from(element: &Element, symbols: &Symbols) -> Result<Self, Error> {
-        let function_name = element
-            .attributes
-            .get(&symbols.function_name)
-            .ok_or(Error::MissingFunctionName)?;
+        let function_name = symbols.function_name.and_then(|idx| element.attributes.get(&idx)).ok_or(Error::MissingFunctionName)?;
 
         let dmx::attribute::Attribute::String(function_name) = function_name else {
             return Err(Error::MissingFunctionName);
@@ -1428,7 +1495,7 @@ impl Operator {
 
         let mut attributes: OrderMap<SymbolIdx, Attribute> = OrderMap::new();
         for (name_idx, attribute) in &element.attributes {
-            if *name_idx == symbols.function_name {
+            if symbols.function_name.is_some_and(|idx| *name_idx == idx) {
                 continue;
             }
 
@@ -1444,23 +1511,60 @@ impl Operator {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Symbols {
     pub element: SymbolIdx,
     pub particle_system_definitions: SymbolIdx,
     pub particle_system_definition: SymbolIdx,
-    pub particle_child: SymbolIdx,
-    pub particle_operator: SymbolIdx,
-    pub function_name: SymbolIdx,
-    pub children: SymbolIdx,
-    pub constraints: SymbolIdx,
-    pub emitters: SymbolIdx,
-    pub forces: SymbolIdx,
-    pub initializers: SymbolIdx,
-    pub operators: SymbolIdx,
-    pub renderers: SymbolIdx,
-    pub child: SymbolIdx,
+    pub particle_child: Option<SymbolIdx>,
+    pub particle_operator: Option<SymbolIdx>,
+    pub function_name: Option<SymbolIdx>,
+    pub children: Option<SymbolIdx>,
+    pub constraints: Option<SymbolIdx>,
+    pub emitters: Option<SymbolIdx>,
+    pub forces: Option<SymbolIdx>,
+    pub initializers: Option<SymbolIdx>,
+    pub operators: Option<SymbolIdx>,
+    pub renderers: Option<SymbolIdx>,
+    pub child: Option<SymbolIdx>,
     pub base: OrderSet<String>,
+}
+
+impl Symbols {
+    pub fn new_with_all_special() -> Self {
+        Self {
+            element: 0,
+            particle_system_definitions: 1,
+            particle_system_definition: 2,
+            particle_child: Some(3),
+            particle_operator: Some(4),
+            function_name: Some(5),
+            children: Some(6),
+            constraints: Some(7),
+            emitters: Some(8),
+            forces: Some(9),
+            initializers: Some(10),
+            operators: Some(11),
+            renderers: Some(12),
+            child: Some(13),
+            base: OrderSet::from([
+                "DmElement".to_string(),
+                "particleSystemDefinitions".to_string(),
+                "DmeParticleSystemDefinition".to_string(),
+                "DmeParticleChild".to_string(),
+                "DmeParticleOperator".to_string(),
+                "functionName".to_string(),
+                "children".to_string(),
+                "constraints".to_string(),
+                "emitters".to_string(),
+                "forces".to_string(),
+                "initializers".to_string(),
+                "operators".to_string(),
+                "renderers".to_string(),
+                "child".to_string(),
+            ]),
+        }
+    }
 }
 
 impl Default for Symbols {
@@ -1469,17 +1573,17 @@ impl Default for Symbols {
             element: 0,
             particle_system_definitions: 1,
             particle_system_definition: 2,
-            particle_child: SymbolIdx::MAX,
-            particle_operator: SymbolIdx::MAX,
-            function_name: SymbolIdx::MAX,
-            children: SymbolIdx::MAX,
-            constraints: SymbolIdx::MAX,
-            emitters: SymbolIdx::MAX,
-            forces: SymbolIdx::MAX,
-            initializers: SymbolIdx::MAX,
-            operators: SymbolIdx::MAX,
-            renderers: SymbolIdx::MAX,
-            child: SymbolIdx::MAX,
+            particle_child: None,
+            particle_operator: None,
+            function_name: None,
+            children: None,
+            constraints: None,
+            emitters: None,
+            forces: None,
+            initializers: None,
+            operators: None,
+            renderers: None,
+            child: None,
             base: OrderSet::from([
                 "DmElement".to_string(),
                 "particleSystemDefinitions".to_string(),
@@ -1493,11 +1597,10 @@ impl TryFrom<dmx::Symbols> for Symbols {
     type Error = Error;
 
     fn try_from(base: dmx::Symbols) -> Result<Self, Self::Error> {
-        fn idx_or_max(from: &dmx::Symbols, value: &CStr) -> SymbolIdx {
+        fn find_idx(from: &dmx::Symbols, value: &CStr) -> Option<SymbolIdx> {
             from.iter()
                 .find_position(|el| *el == value)
                 .map(|(idx, _)| idx as SymbolIdx)
-                .unwrap_or(SymbolIdx::MAX)
         }
 
         let element = base
@@ -1518,17 +1621,17 @@ impl TryFrom<dmx::Symbols> for Symbols {
             .ok_or(Error::MissingSystemDefinitionString)?
             .0 as SymbolIdx;
 
-        let particle_child = idx_or_max(&base, c"DmeParticleChild");
-        let particle_operator = idx_or_max(&base, c"DmeParticleOperator");
-        let function_name = idx_or_max(&base, c"functionName");
-        let children = idx_or_max(&base, c"children");
-        let constraints = idx_or_max(&base, c"constraints");
-        let emitters = idx_or_max(&base, c"emitters");
-        let forces = idx_or_max(&base, c"forces");
-        let initializers = idx_or_max(&base, c"initializers");
-        let operators = idx_or_max(&base, c"operators");
-        let renderers = idx_or_max(&base, c"renderers");
-        let child = idx_or_max(&base, c"child");
+        let particle_child = find_idx(&base, c"DmeParticleChild");
+        let particle_operator = find_idx(&base, c"DmeParticleOperator");
+        let function_name = find_idx(&base, c"functionName");
+        let children = find_idx(&base, c"children");
+        let constraints = find_idx(&base, c"constraints");
+        let emitters = find_idx(&base, c"emitters");
+        let forces = find_idx(&base, c"forces");
+        let initializers = find_idx(&base, c"initializers");
+        let operators = find_idx(&base, c"operators");
+        let renderers = find_idx(&base, c"renderers");
+        let child = find_idx(&base, c"child");
 
         let base = base
             .into_iter()
@@ -1566,6 +1669,229 @@ impl From<Symbols> for dmx::Symbols {
                 CString::from_vec_with_nul(vec).expect("this should never fail")
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod symbol_stripping_tests {
+    use dmx::dmx::Version;
+    use ordermap::OrderMap;
+
+    use crate::{ParticleSystem, Pcf, Root, new::{Child, Operator, Symbols}};
+
+    #[test]
+    fn never_strips_required_symbols() {
+        let pcf = Pcf {
+            version: Version::Binary2Pcf1,
+            symbols: Symbols::default(),
+            root: Root::default(),
+            encoded_size: 0,
+        }.unused_symbols_stripped();
+
+        assert_eq!(Symbols::default().base, pcf.symbols.base, "the required symbols (left) were stripped in the resulting pcf (right)");
+    }
+
+    #[test]
+    fn strips_all_unused_symbols() {
+        let mut symbols = Symbols::new_with_all_special();
+        symbols.base.insert("test1".to_string());
+        symbols.base.insert("test2".to_string());
+        symbols.base.insert("test3".to_string());
+
+        let pcf = Pcf {
+            version: Version::Binary2Pcf1,
+            symbols,
+            root: Root::default(),
+            encoded_size: 0,
+        }.unused_symbols_stripped();
+
+        assert!(!pcf.symbols.base.contains("test1"), "the unused symbols were not stripped from the pcf");
+        assert!(!pcf.symbols.base.contains("test2"), "the unused symbols were not stripped from the pcf");
+        assert!(!pcf.symbols.base.contains("test3"), "the unused symbols were not stripped from the pcf");
+        assert_eq!(Symbols::default(), pcf.symbols);
+    }
+
+    #[test]
+    fn doesnt_strip_used_symbols() {
+        fn empty_operator(name: &str, function_name: &str) -> Operator {
+            Operator {
+                name: name.to_string(),
+                function_name: function_name.to_string(),
+                signature: [2; 16],
+                attributes: OrderMap::new(),
+            }
+        }
+
+        let pcf = Pcf {
+            version: Version::Binary2Pcf1,
+            symbols: Symbols::new_with_all_special(),
+            root: Root {
+                name: "untitled".to_string(),
+                signature: [0; 16],
+                particle_systems: Box::from([
+                    ParticleSystem {
+                        name: "parent".to_string(),
+                        signature: [1; 16],
+                        children: Vec::new().into_boxed_slice(),
+                        constraints: Box::from([empty_operator("constraint", "constrain function")]) as Box<[Operator]>,
+                        emitters: Box::from([empty_operator("emitter", "emit function")]) as Box<[Operator]>,
+                        forces: Box::from([empty_operator("force", "force function")]) as Box<[Operator]>,
+                        initializers: Box::from([empty_operator("initializer", "initialize function")]) as Box<[Operator]>,
+                        operators: Box::from([empty_operator("operator", "operate function")]) as Box<[Operator]>,
+                        renderers: Box::from([empty_operator("renderer", "render function")]) as Box<[Operator]>,
+                        attributes: OrderMap::new(),
+                    },
+                ]) as Box<[ParticleSystem]>,
+                attributes: OrderMap::new(),
+            },
+            encoded_size: 0,
+        }.unused_symbols_stripped();
+
+        assert!(!pcf.symbols.base.contains("DmeParticleChild"));
+        assert!(!pcf.symbols.base.contains("child"));
+        assert!(!pcf.symbols.base.contains("children"));
+    }
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use bytes::Buf;
+    use dmx::{Dmx, dmx::Version};
+    use ordermap::OrderMap;
+
+    use crate::{ParticleSystem, Pcf, Root, new::{Child, Symbols}};
+
+    #[test]
+    fn creates_single_connected_component() {
+        let pcf = Pcf {
+            version: Version::Binary2Pcf1,
+            symbols: Symbols::new_with_all_special(),
+            root: Root {
+                name: "untitled".to_string(),
+                signature: [0; 16],
+                particle_systems: Box::from([
+                    ParticleSystem {
+                        name: "parent".to_string(),
+                        signature: [0; 16],
+                        children: Box::from([Child {
+                            name: "parent_child".to_string(),
+                            signature: [0; 16],
+                            child: 1usize.into(),
+                            attributes: OrderMap::new(),
+                        }]) as Box<[Child]>,
+                        ..ParticleSystem::default()
+                    },
+                    ParticleSystem {
+                        name: "daughter".to_string(),
+                        signature: [0; 16],
+                        ..ParticleSystem::default()
+                    },
+                    ParticleSystem {
+                        name: "step parent".to_string(),
+                        signature: [0; 16],
+                        children: Box::from([Child {
+                            name: "parent_child".to_string(),
+                            signature: [0; 16],
+                            child: 1usize.into(),
+                            attributes: OrderMap::new(),
+                        }, Child {
+                            name: "parent_child".to_string(),
+                            signature: [0; 16],
+                            child: 3usize.into(),
+                            attributes: OrderMap::new(),
+                        }]) as Box<[Child]>,
+                        ..ParticleSystem::default()
+                    },
+                    ParticleSystem {
+                        name: "step daughter".to_string(),
+                        signature: [0; 16],
+                        ..ParticleSystem::default()
+                    }
+                ]) as Box<[ParticleSystem]>,
+                attributes: OrderMap::new(),
+            },
+            encoded_size: 0,
+        };
+
+        let graph = pcf.into_connected();
+        assert_eq!(1, graph.len());
+    }
+
+    #[test]
+    fn creates_two_connected_components() {
+        let pcf = Pcf {
+            version: Version::Binary2Pcf1,
+            symbols: Symbols::new_with_all_special(),
+            root: Root {
+                name: "untitled".to_string(),
+                signature: [0; 16],
+                particle_systems: Box::from([
+                    ParticleSystem {
+                        name: "parent".to_string(),
+                        signature: [0; 16],
+                        children: Box::from([Child {
+                            name: "child daughter".to_string(),
+                            signature: [0; 16],
+                            child: 1usize.into(),
+                            attributes: OrderMap::new(),
+                        }]) as Box<[Child]>,
+                        ..ParticleSystem::default()
+                    },
+                    ParticleSystem {
+                        name: "daughter".to_string(),
+                        signature: [0; 16],
+                        ..ParticleSystem::default()
+                    },
+                    ParticleSystem {
+                        name: "parent's sister".to_string(),
+                        signature: [0; 16],
+                        children: Box::from([Child {
+                            name: "child cousin".to_string(),
+                            signature: [0; 16],
+                            child: 3usize.into(),
+                            attributes: OrderMap::new(),
+                        }]) as Box<[Child]>,
+                        ..ParticleSystem::default()
+                    },
+                    ParticleSystem {
+                        name: "daughter's cousin".to_string(),
+                        signature: [0; 16],
+                        ..ParticleSystem::default()
+                    }
+                ]) as Box<[ParticleSystem]>,
+                attributes: OrderMap::new(),
+            },
+            encoded_size: 0,
+        };
+
+        let mut graph = pcf.into_connected();
+        assert_eq!(2, graph.len());
+
+        let parent = graph.pop().unwrap();
+        let step_parent = graph.pop().unwrap();
+
+        assert_eq!("untitled", parent.root.name);
+        assert_eq!(2, parent.root.particle_systems.len());
+        assert_eq!("parent", &parent.root.particle_systems[0].name);
+        assert_eq!("daughter", &parent.root.particle_systems[1].name);
+
+        assert_eq!("untitled", step_parent.root.name);
+        assert_eq!(2, step_parent.root.particle_systems.len());
+        assert_eq!("parent's sister", &step_parent.root.particle_systems[0].name);
+        assert_eq!("daughter's cousin", &step_parent.root.particle_systems[1].name);
+    }
+
+    const TEST_PCF_DATA: &[u8] = include_bytes!("medicgun_beam.pcf");
+
+    #[test]
+    fn connected_components_can_be_reparsed_as_valid_pcf() {
+        let mut reader = TEST_PCF_DATA.reader();
+        let dmx = dmx::decode(&mut reader).unwrap();
+        let pcf: Pcf = dmx.try_into().unwrap();
+        for (idx, pcf) in pcf.into_connected().into_iter().enumerate() {
+            let dmx: Dmx = pcf.into();
+            let _: Pcf = dmx.try_into().unwrap();
+        }
     }
 }
 
@@ -1860,6 +2186,18 @@ mod tests {
         let new_size = pcf.compute_encoded_size();
 
         assert_eq!(expected_size, new_size);
+    }
+
+    #[test]
+    fn merging_creates_pcf_that_can_be_converted_into_a_valid_dmx_and_back() {
+        let mut reader = TEST_PCF_DATA.reader();
+        let dmx = dmx::decode(&mut reader).unwrap();
+        let into = Pcf::try_from(dmx).unwrap();
+        let from = into.clone();
+
+        let pcf = into.merged(from).unwrap();
+        let new_dmx: Dmx = pcf.clone().into();
+        let new_pcf: Pcf = new_dmx.try_into().unwrap();
     }
 
     #[test]
