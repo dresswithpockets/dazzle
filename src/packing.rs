@@ -68,6 +68,7 @@ impl PcfBinMap {
             }
 
             bin.pcf.merged_in(from)?;
+            // self.system_names.extend(bin.pcf.particle_systems().iter().map(|system| system.name.clone()));
 
             packed = true;
             break;

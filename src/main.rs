@@ -49,6 +49,7 @@ use dmx::{
     Dmx,
     attribute::{Color, Vector3},
 };
+use hashbrown::HashSet;
 use nanoserde::DeJson;
 use rayon::prelude::*;
 use single_instance::SingleInstance;
@@ -299,6 +300,9 @@ fn get_default_attribute_map() -> anyhow::Result<HashMap<String, HashMap<String,
         let value_map: HashMap<_, _> = operator
             .attributes
             .into_iter()
+            // .filter(|(name_idx, _)| {
+            //     symbols.base.get_index_of("distance_bias").is_none_or(|idx| *name_idx as usize != idx)
+            // })
             .map(|(name_idx, attribute)| {
                 let name = symbols
                     .base
@@ -314,14 +318,23 @@ fn get_default_attribute_map() -> anyhow::Result<HashMap<String, HashMap<String,
     Ok(operator_map)
 }
 
+struct VanillaPcfInfo {
+    vanilla_pcfs: Vec<VanillaPcf>,
+    pcfs_with_dx80: HashSet<String>,
+    pcfs_with_dx90: HashSet<String>,
+}
+
 struct VanillaPcf {
     name: String,
     pcf: pcf::new::Pcf,
     metadata: Metadata,
 }
 
-fn get_vanilla_pcf_info() -> Result<Vec<VanillaPcf>, io::Error> {
-    let read_dir = fs::read_dir("backup/particles")?;
+fn get_vanilla_pcf_info() -> Result<VanillaPcfInfo, io::Error> {
+    let read_dir = fs::read_dir("backup/tf_particles")?;
+    let mut with_dx80 = HashSet::new();
+    let mut with_dx90 = HashSet::new();
+    // let mut with_high = HashSet::new();
 
     let mut entries = Vec::new();
     for entry in read_dir {
@@ -334,14 +347,38 @@ fn get_vanilla_pcf_info() -> Result<Vec<VanillaPcf>, io::Error> {
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
 
-        if file_name.ends_with("dx80.pcf") || file_name.ends_with("dx90.pcf") {
-            continue;
-        }
+        // if let Some(stripped) = file_name.strip_suffix("_dx80.pcf") {
+        //     with_dx80.insert("particles/".to_string() + stripped + ".pcf");
+        //     continue;
+        // }
+
+        // if let Some(stripped) = file_name.strip_suffix("_dx90.pcf") {
+        //     with_dx90.insert("particles/".to_string() + stripped + ".pcf");
+        //     continue;
+        // }
+
+        // if let Some(stripped) = file_name.strip_suffix("_dx90_slow.pcf") {
+        //     with_dx90.insert("particles/".to_string() + stripped + ".pcf");
+        //     continue;
+        // }
+
+        // if let Some(stripped) = file_name.strip_suffix("_high.pcf") {
+        //     with_high.insert("particles/".to_string() + stripped + ".pcf");
+        //     continue;
+        // }
+
+        // if let Some(stripped) = file_name.strip_suffix("_mvm.pcf") {
+        //     with_high.insert("particles/".to_string() + stripped + ".pcf");
+        //     continue;
+        // }
 
         let name = "particles/".to_string() + &file_name;
 
         entries.push((name, entry.path(), metadata));
     }
+
+    // try skipping all files with a matching dx80/dx90 pcf - so they remain identical to vanilla.
+    // let entries: Vec<_> = entries.into_iter().filter(|(name, _, _)| !with_dx80.contains(name) && !with_dx90.contains(name)).collect();
 
     let pcfs: Result<Vec<VanillaPcf>, io::Error> = entries
         .into_par_iter()
@@ -355,7 +392,11 @@ fn get_vanilla_pcf_info() -> Result<Vec<VanillaPcf>, io::Error> {
         })
         .collect();
 
-    pcfs
+    Ok(VanillaPcfInfo {
+        vanilla_pcfs: pcfs?,
+        pcfs_with_dx80: with_dx80,
+        pcfs_with_dx90: with_dx90,
+    })
 }
 
 fn default_bin_from(vanilla_pcf: &VanillaPcf) -> PcfBin {
@@ -366,6 +407,24 @@ fn default_bin_from(vanilla_pcf: &VanillaPcf) -> PcfBin {
         name: vanilla_pcf.name.clone(),
         pcf,
     }
+}
+
+fn get_default_operator_map() -> HashMap<&'static str, pcf::Attribute> {
+    HashMap::from([
+        ("operator start fadein", 0.0.into()),
+        ("operator end fadein", 0.0.into()),
+        ("operator start fadeout", 0.0.into()),
+        ("operator end fadeout", 0.0.into()),
+        ("Visibility Proxy Input Control Point Number", (-1).into()),
+        ("Visibility Proxy Radius", 1.0.into()),
+        ("Visibility input minimum", 0.0.into()),
+        ("Visibility input maximum", 1.0.into()),
+        ("Visibility Alpha Scale minimum", 0.0.into()),
+        ("Visibility Alpha Scale maximum", 1.0.into()),
+        ("Visibility Radius Scale minimum", 1.0.into()),
+        ("Visibility Radius Scale maximum", 1.0.into()),
+        ("Visibility Camera Depth Bias", 0.0.into())
+    ])
 }
 
 fn get_particle_system_defaults() -> HashMap<&'static str, pcf::Attribute> {
@@ -410,19 +469,21 @@ fn get_particle_system_defaults() -> HashMap<&'static str, pcf::Attribute> {
 fn next() -> anyhow::Result<()> {
     // TODO: open every vanilla PCF and create a list of every vanilla particle system definition that must exist
 
-    let operator_defaults = get_default_attribute_map()?;
+    // let operator_defaults = get_default_attribute_map()?;
+    let operator_defaults = get_default_operator_map();
     let particle_system_defaults = get_particle_system_defaults();
 
     // vanilla PCFs have a set size, and we have to fit our particle systems into those PCFs. It doesn't matter which
     // PCF they land in so long as they fit. We're solving this using a best-fit bin packing algorithm.
     println!("loading vanilla pcf info");
-    let vanilla_pcfs: Vec<_> = get_vanilla_pcf_info()?
+    let vanilla_pcf_info = get_vanilla_pcf_info()?;
+    let vanilla_pcfs: Vec<_> = vanilla_pcf_info.vanilla_pcfs
         .into_par_iter()
         .map(|vanilla_pcf| {
             println!("stripping {} of unecessary defaults", vanilla_pcf.name);
             let pcf = vanilla_pcf
                 .pcf
-                .defaults_stripped(&particle_system_defaults, &operator_defaults);
+                .defaults_stripped_nth(1000, &particle_system_defaults, &operator_defaults);
             VanillaPcf { pcf, ..vanilla_pcf }
         })
         .collect();
@@ -509,16 +570,16 @@ fn next() -> anyhow::Result<()> {
 
     // first we bin-pack our addon's custom particles.
     println!("bin-packing addon particles...");
-    for addon in addons {
-        for (path, pcf) in addon.particle_files {
-            println!("stripping {path} of unecessary defaults");
-            let graph = pcf.into_connected();
-            for mut pcf in graph {
-                println!("bin-packing a graph with '{}' elements", pcf.particle_systems().len());
-                bins.pack_group(&mut pcf)?;
-            }
-        }
-    }
+    // for addon in addons {
+    //     for (path, pcf) in addon.particle_files {
+    //         println!("stripping {path} of unecessary defaults");
+    //         let graph = pcf.into_connected();
+    //         for mut pcf in graph {
+    //             println!("bin-packing a graph with '{}' elements", pcf.particle_systems().len());
+    //             bins.pack_group(&mut pcf)?;
+    //         }
+    //     }
+    // }
 
     // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank
     // slate for our addons; so, we pack every vanilla particle system not present in the bins.
@@ -526,12 +587,17 @@ fn next() -> anyhow::Result<()> {
     for (name, graphs) in vanilla_graphs {
         println!("bin-packing {} graphs from {}.", graphs.len(), name);
         for mut graph in graphs {
-            let missing_system = graph
+            let missing_system: Vec<_> = graph
                 .particle_systems()
                 .iter()
-                .any(|system| !bins.has_system_name(&system.name));
+                .filter(|system| !bins.has_system_name(&system.name))
+                .map(|system| system.name.as_str())
+                .collect();
 
-            if missing_system {
+            if !missing_system.is_empty() {
+
+                // println!("{name}: bins are missing these particle systems: {}", missing_system.join(","));
+
                 // println!("bin-packing a missing vanilla particle from {:?}", names.iter().map(|n|n.display()));
                 if bins.pack_group(&mut graph).is_err() {
                     eprintln!("There wasn't enough space...");
@@ -556,6 +622,7 @@ fn next() -> anyhow::Result<()> {
     }
 
     for bin in bins {
+        println!("writing {} to vpk", bin.name);
         let dmx: Dmx = bin.pcf.into();
 
         let mut writer = BytesMut::new().writer();
@@ -565,6 +632,28 @@ fn next() -> anyhow::Result<()> {
         let size = buffer.len() as u64;
         let mut reader = buffer.reader();
         app.tf_misc_vpk.patch_file(&bin.name, size, &mut reader)?;
+
+        if vanilla_pcf_info.pcfs_with_dx80.contains(&bin.name) {
+            let name = bin.name.trim_suffix(".pcf").to_string() + "_dx80.pcf";
+            let mut writer = BytesMut::new().writer();
+            dmx.encode(&mut writer)?;
+
+            let buffer = writer.into_inner();
+            let size = buffer.len() as u64;
+            let mut reader = buffer.reader();
+            app.tf_misc_vpk.patch_file(&name, size, &mut reader)?;
+        }
+
+        if vanilla_pcf_info.pcfs_with_dx90.contains(&bin.name) {
+            let name = bin.name.trim_suffix(".pcf").to_string() + "_dx90.pcf";
+            let mut writer = BytesMut::new().writer();
+            dmx.encode(&mut writer)?;
+
+            let buffer = writer.into_inner();
+            let size = buffer.len() as u64;
+            let mut reader = buffer.reader();
+            app.tf_misc_vpk.patch_file(&name, size, &mut reader)?;
+        }
     }
 
     Ok(())
