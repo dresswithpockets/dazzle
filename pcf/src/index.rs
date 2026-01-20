@@ -1,7 +1,4 @@
-use std::{
-    ops::{Add, AddAssign},
-    u32,
-};
+use std::ops::{Add, AddAssign};
 
 use derive_more::{Display, Into};
 use thiserror::Error;
@@ -12,10 +9,6 @@ pub struct ElementIdx(u32);
 
 impl ElementIdx {
     pub const INVALID: ElementIdx = ElementIdx(u32::MAX);
-
-    pub(crate) fn from_unchecked(value: u32) -> ElementIdx {
-        ElementIdx(value)
-    }
 
     pub fn is_valid(&self) -> bool {
         self.0 != u32::MAX
