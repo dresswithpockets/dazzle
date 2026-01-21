@@ -32,33 +32,24 @@ pub mod addon;
 pub mod app;
 mod packing;
 pub mod patch;
+mod paths;
+mod pcf_defaults;
 mod vpk_writer;
 
 use std::{
-    collections::HashMap,
-    ffi::CString,
     fs::{self, File, Metadata},
     io::{self},
     process,
-    str::FromStr,
 };
 
 use bytes::{Buf, BufMut, BytesMut};
-use directories::ProjectDirs;
-use dmx::{
-    Dmx,
-    attribute::{Color, Vector3},
-};
+use dmx::Dmx;
 use hashbrown::HashSet;
-use nanoserde::DeJson;
 use rayon::prelude::*;
-use single_instance::SingleInstance;
-use thiserror::Error;
-use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf, Utf8UnixPathBuf};
-use vpk::VPK;
+use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
 use crate::addon::Sources;
-use crate::app::App;
+use crate::app::AppBuilder;
 use crate::{
     packing::{PcfBin, PcfBinMap},
     patch::PatchVpkExt,
@@ -66,22 +57,6 @@ use crate::{
 
 const SPLIT_BY_2GB: u32 = 2 << 30;
 
-mod paths {
-    use std::{borrow::Cow, path::Path, str::Utf8Error};
-
-    use typed_path::{PlatformPath, Utf8PlatformPath, Utf8PlatformPathBuf};
-
-    pub fn to_typed(path: &Path) -> Cow<'_, Utf8PlatformPath> {
-        match path.as_os_str().to_string_lossy() {
-            Cow::Borrowed(path) => Cow::Borrowed(Utf8PlatformPath::from_bytes_path(PlatformPath::new(path)).unwrap()),
-            Cow::Owned(path) => Cow::Owned(Utf8PlatformPathBuf::from(path)),
-        }
-    }
-
-    pub fn std_to_typed(path: &Path) -> Result<&Utf8PlatformPath, Utf8Error> {
-        Utf8PlatformPath::from_bytes_path(PlatformPath::new(path.as_os_str().as_encoded_bytes()))
-    }
-}
 
 const TF2_VPK_NAME: &str = "tf2_misc_dir.vpk";
 const APP_INSTANCE_NAME: &str = "net.dresswithpockets.tf2dazzle.lock";
@@ -89,234 +64,7 @@ const APP_TLD: &str = "net";
 const APP_ORG: &str = "dresswithpockets";
 const APP_NAME: &str = "tf2dazzle";
 const PARTICLE_SYSTEM_MAP: &str = include_str!("particle_system_map.json");
-const DEFAULT_PCF_DATA: &[u8] = include_bytes!("default_values.pcf");
 
-#[derive(Debug, Error)]
-enum BuildError {
-    #[error("couldn't verify that there is only a single instance of dazzle running, due to an internal error")]
-    CantInitSingleInstance(#[from] single_instance::error::SingleInstanceError),
-
-    #[error("there are multiple instances of dazzle running")]
-    MultipleInstances,
-
-    #[error("couldn't find a valid home directory, which is necessary for some operations")]
-    NoValidHomeDirectory,
-
-    #[error("couldn't clear the addon content cache, due to an IO error")]
-    CantClearContentCache(io::Error),
-
-    #[error("couldn't create the addon content cache, due to an IO error")]
-    CantCreateContentCache(io::Error),
-
-    #[error("couldn't clear the working VPK directory, due to an IO error")]
-    CantClearWorkingVpkDirectory(io::Error),
-
-    #[error("couldn't create the working VPK directory, due to an IO error")]
-    CantCreateWorkingVpkDirectory(io::Error),
-
-    #[error("couldn't create the addons directory, due to an IO error")]
-    CantCreateAddonsDirectory(io::Error),
-
-    #[error("couldn't find the backup assets directory")]
-    MissingBackupDirectory,
-
-    #[error("couldn't find the backup assets directory, due to an IO error")]
-    IoBackupDirectory(io::Error),
-
-    #[error("couldn't find the custom directory in the tf dir specified: '{0}'")]
-    MissingTfCustomDirectory(Utf8PlatformPathBuf),
-
-    #[error("couldn't find the custom directory in the tf dir specified: '{0}', due to an IO error")]
-    IoTfCustomDirectory(Utf8PlatformPathBuf, io::Error),
-
-    #[error("couldn't read tf2_misc_dir.vpk: {0}")]
-    CantReadMiscVpk(#[from] vpk::Error),
-}
-
-#[derive(Default)]
-struct AppBuilder {
-    tf_dir: Utf8PlatformPathBuf,
-}
-
-impl AppBuilder {
-    fn with_tf_dir(path: Utf8PlatformPathBuf) -> Self {
-        Self { tf_dir: path }
-    }
-
-    fn create_single_instance() -> Result<SingleInstance, BuildError> {
-        // TODO: single_instance's macos implementation might not be desirable since this program is intended to be portable... maybe we just dont support macos (:
-        let instance = SingleInstance::new(APP_INSTANCE_NAME)?;
-        if instance.is_single() {
-            Ok(instance)
-        } else {
-            Err(BuildError::MultipleInstances)
-        }
-    }
-
-    fn create_project_dirs() -> Result<ProjectDirs, BuildError> {
-        ProjectDirs::from(APP_TLD, APP_ORG, APP_NAME).ok_or(BuildError::NoValidHomeDirectory)
-    }
-
-    fn get_working_dir(dirs: &ProjectDirs) -> Utf8PlatformPathBuf {
-        let working_dir = dirs.data_local_dir().join("working");
-        paths::to_typed(&working_dir).into_owned()
-    }
-
-    fn create_new_content_cache_dir(dir: &Utf8PlatformPath) -> Result<Utf8PlatformPathBuf, BuildError> {
-        let extracted_addons_dir = dir.join("extracted");
-        if let Err(err) = fs::remove_dir_all(&extracted_addons_dir)
-            && err.kind() != io::ErrorKind::NotFound
-        {
-            Err(BuildError::CantClearContentCache(err))
-        } else {
-            fs::create_dir_all(&extracted_addons_dir).map_err(BuildError::CantCreateContentCache)?;
-            Ok(extracted_addons_dir)
-        }
-    }
-
-    fn create_new_working_vpk_dir(dir: &Utf8PlatformPath) -> Result<Utf8PlatformPathBuf, BuildError> {
-        let working_vpk_dir = dir.join("vpk");
-        if let Err(err) = fs::remove_dir_all(&working_vpk_dir)
-            && err.kind() != io::ErrorKind::NotFound
-        {
-            Err(BuildError::CantClearWorkingVpkDirectory(err))
-        } else {
-            fs::create_dir_all(&working_vpk_dir).map_err(BuildError::CantCreateWorkingVpkDirectory)?;
-            Ok(working_vpk_dir)
-        }
-    }
-
-    fn create_addons_dir(dir: &Utf8PlatformPath) -> Result<Utf8PlatformPathBuf, BuildError> {
-        let addons_dir = dir.join("addons");
-        fs::create_dir_all(&addons_dir).map_err(BuildError::CantCreateAddonsDirectory)?;
-        Ok(addons_dir)
-    }
-
-    fn get_backup_dir() -> Result<Utf8PlatformPathBuf, BuildError> {
-        let backup_dir = Utf8PlatformPathBuf::from_str("./backup")
-            .expect("from_str should always succeed with this path")
-            .absolutize()
-            .map_err(BuildError::IoBackupDirectory)?;
-
-        let metadata = fs::metadata(&backup_dir).map_err(|err| {
-            if err.kind() == io::ErrorKind::NotFound {
-                BuildError::MissingBackupDirectory
-            } else {
-                BuildError::IoBackupDirectory(err)
-            }
-        })?;
-
-        if metadata.is_dir() {
-            Ok(backup_dir)
-        } else {
-            Err(BuildError::MissingBackupDirectory)
-        }
-    }
-
-    fn get_vanilla_pcf_map() -> HashMap<String, Vec<CString>> {
-        DeJson::deserialize_json(PARTICLE_SYSTEM_MAP).expect("the PARTICLE_SYSTEM_MAP should always be valid JSON")
-    }
-
-    fn get_misc_vpk(&self) -> Result<VPK, BuildError> {
-        let vpk_path = self.tf_dir.join(TF2_VPK_NAME);
-        Ok(VPK::read(vpk_path)?)
-    }
-
-    fn get_tf_custom_dir(&self) -> Result<Utf8PlatformPathBuf, BuildError> {
-        let custom_path = self.tf_dir.join("custom");
-
-        match fs::metadata(&custom_path) {
-            Ok(metadata) if metadata.is_dir() => Ok(custom_path),
-            Err(err) if err.kind() != io::ErrorKind::NotFound => Err(BuildError::IoTfCustomDirectory(custom_path, err)),
-            _ => Err(BuildError::MissingTfCustomDirectory(custom_path)),
-        }
-    }
-
-    fn build(self) -> Result<App, BuildError> {
-        _ = Self::create_single_instance()?;
-
-        let project_dirs = Self::create_project_dirs()?;
-        let working_dir = Self::get_working_dir(&project_dirs);
-        let extracted_content_dir = Self::create_new_content_cache_dir(&working_dir)?;
-        let working_vpk_dir = Self::create_new_working_vpk_dir(&working_dir)?;
-        let addons_dir = Self::create_addons_dir(&working_dir)?;
-        let backup_dir = Self::get_backup_dir()?;
-        let tf_custom_dir = self.get_tf_custom_dir()?;
-        let tf_misc_vpk = self.get_misc_vpk()?;
-
-        let vanilla_pcf_to_systems = Self::get_vanilla_pcf_map();
-        let vanilla_system_to_pcf: HashMap<CString, String> = vanilla_pcf_to_systems
-            .iter()
-            .flat_map(|(pcf_path, systems)| systems.iter().map(|system| (system.clone(), pcf_path.clone())))
-            .collect();
-
-        let mut vanilla_pcf_paths = Vec::new();
-        for path in vanilla_pcf_to_systems.keys() {
-            let path = Utf8UnixPathBuf::from_str(path).expect("the PCF map keys must always be valid unix paths");
-            vanilla_pcf_paths.push(path.with_platform_encoding());
-        }
-
-        Ok(App {
-            addons_dir,
-            extracted_content_dir,
-            backup_dir,
-            working_vpk_dir,
-
-            vanilla_pcf_paths,
-            vanilla_pcf_to_systems,
-            vanilla_system_to_pcf,
-
-            tf_misc_vpk,
-            tf_custom_dir,
-        })
-    }
-}
-
-/// Decodes [`DEFAULT_PCF_DATA`] and produces a map of `functionName`, to a default attribute value map.
-fn get_default_attribute_map() -> anyhow::Result<HashMap<String, HashMap<String, pcf::Attribute>>> {
-    let mut reader = DEFAULT_PCF_DATA.reader();
-    let dmx = dmx::decode(&mut reader)?;
-    let pcf = pcf::new::Pcf::try_from(dmx)?;
-
-    let (_, symbols, root) = pcf.into_parts();
-    let (_, _, particle_systems, _) = root.into_parts();
-
-    let all_operators = particle_systems
-        .into_iter()
-        .flat_map(|system| {
-            [
-                system.constraints,
-                system.emitters,
-                system.forces,
-                system.initializers,
-                system.operators,
-                system.renderers,
-            ]
-        })
-        .flatten();
-
-    let mut operator_map = HashMap::new();
-    for operator in all_operators {
-        let value_map: HashMap<_, _> = operator
-            .attributes
-            .into_iter()
-            // .filter(|(name_idx, _)| {
-            //     symbols.base.get_index_of("distance_bias").is_none_or(|idx| *name_idx as usize != idx)
-            // })
-            .map(|(name_idx, attribute)| {
-                let name = symbols
-                    .base
-                    .get_index(name_idx as usize)
-                    .expect("this should never happen");
-                (name.clone(), attribute)
-            })
-            .collect();
-
-        operator_map.insert(operator.function_name, value_map);
-    }
-
-    Ok(operator_map)
-}
 
 struct VanillaPcfInfo {
     vanilla_pcfs: Vec<VanillaPcf>,
@@ -334,7 +82,7 @@ fn get_vanilla_pcf_info() -> Result<VanillaPcfInfo, io::Error> {
     let read_dir = fs::read_dir("backup/tf_particles")?;
     let mut with_dx80 = HashSet::new();
     let mut with_dx90 = HashSet::new();
-    // let mut with_high = HashSet::new();
+    let mut with_high = HashSet::new();
 
     let mut entries = Vec::new();
     for entry in read_dir {
@@ -347,30 +95,30 @@ fn get_vanilla_pcf_info() -> Result<VanillaPcfInfo, io::Error> {
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
 
-        // if let Some(stripped) = file_name.strip_suffix("_dx80.pcf") {
-        //     with_dx80.insert("particles/".to_string() + stripped + ".pcf");
-        //     continue;
-        // }
+        if let Some(stripped) = file_name.strip_suffix("_dx80.pcf") {
+            with_dx80.insert("particles/".to_string() + stripped + ".pcf");
+            continue;
+        }
 
-        // if let Some(stripped) = file_name.strip_suffix("_dx90.pcf") {
-        //     with_dx90.insert("particles/".to_string() + stripped + ".pcf");
-        //     continue;
-        // }
+        if let Some(stripped) = file_name.strip_suffix("_dx90.pcf") {
+            with_dx90.insert("particles/".to_string() + stripped + ".pcf");
+            continue;
+        }
 
-        // if let Some(stripped) = file_name.strip_suffix("_dx90_slow.pcf") {
-        //     with_dx90.insert("particles/".to_string() + stripped + ".pcf");
-        //     continue;
-        // }
+        if let Some(stripped) = file_name.strip_suffix("_dx90_slow.pcf") {
+            with_dx90.insert("particles/".to_string() + stripped + ".pcf");
+            continue;
+        }
 
-        // if let Some(stripped) = file_name.strip_suffix("_high.pcf") {
-        //     with_high.insert("particles/".to_string() + stripped + ".pcf");
-        //     continue;
-        // }
+        if let Some(stripped) = file_name.strip_suffix("_high.pcf") {
+            with_high.insert("particles/".to_string() + stripped + ".pcf");
+            continue;
+        }
 
-        // if let Some(stripped) = file_name.strip_suffix("_mvm.pcf") {
-        //     with_high.insert("particles/".to_string() + stripped + ".pcf");
-        //     continue;
-        // }
+        if let Some(stripped) = file_name.strip_suffix("_mvm.pcf") {
+            with_high.insert("particles/".to_string() + stripped + ".pcf");
+            continue;
+        }
 
         let name = "particles/".to_string() + &file_name;
 
@@ -409,69 +157,12 @@ fn default_bin_from(vanilla_pcf: &VanillaPcf) -> PcfBin {
     }
 }
 
-fn get_default_operator_map() -> HashMap<&'static str, pcf::Attribute> {
-    HashMap::from([
-        ("operator start fadein", 0.0.into()),
-        ("operator end fadein", 0.0.into()),
-        ("operator start fadeout", 0.0.into()),
-        ("operator end fadeout", 0.0.into()),
-        ("Visibility Proxy Input Control Point Number", (-1).into()),
-        ("Visibility Proxy Radius", 1.0.into()),
-        ("Visibility input minimum", 0.0.into()),
-        ("Visibility input maximum", 1.0.into()),
-        ("Visibility Alpha Scale minimum", 0.0.into()),
-        ("Visibility Alpha Scale maximum", 1.0.into()),
-        ("Visibility Radius Scale minimum", 1.0.into()),
-        ("Visibility Radius Scale maximum", 1.0.into()),
-        ("Visibility Camera Depth Bias", 0.0.into())
-    ])
-}
-
-fn get_particle_system_defaults() -> HashMap<&'static str, pcf::Attribute> {
-    HashMap::from([
-        ("batch particle systems", false.into()),
-        (
-            "bounding_box_min",
-            Vector3((-10.0).into(), (-10.0).into(), (-10.0).into()).into(),
-        ),
-        (
-            "bounding_box_max",
-            Vector3(10.0.into(), 10.0.into(), 10.0.into()).into(),
-        ),
-        ("color", Color(255, 255, 255, 255).into()),
-        ("control point to disable rendering if it is the camera", (-1).into()),
-        ("cull_control_point", 0.into()),
-        ("cull_cost", 1.0.into()),
-        ("cull_radius", 0.0.into()),
-        ("cull_replacement_definition", String::new().into()),
-        ("group id", 0.into()),
-        ("initial_particles", 0i32.into()),
-        ("max_particles", 1000i32.into()),
-        ("material", "vgui/white".to_string().into()),
-        ("max_particles", 1000.into()),
-        ("maximum draw distance", 100_000.0.into()),
-        ("maximum sim tick rate", 0.0.into()),
-        ("maximum time step", 0.1.into()),
-        ("minimum rendered frames", 0.into()),
-        ("minimum sim tick rate", 0.0.into()),
-        ("preventNameBasedLookup", false.into()),
-        ("radius", 5.0.into()),
-        ("rotation", 0.0.into()),
-        ("rotation_speed", 0.0.into()),
-        ("sequence_number", 0.into()),
-        ("sequence_number1", 0.into()),
-        ("Sort particles", true.into()),
-        ("time to sleep when not drawn", 8.0.into()),
-        ("view model effect", false.into()),
-    ])
-}
-
 fn next() -> anyhow::Result<()> {
     // TODO: open every vanilla PCF and create a list of every vanilla particle system definition that must exist
 
     // let operator_defaults = get_default_attribute_map()?;
-    let operator_defaults = get_default_operator_map();
-    let particle_system_defaults = get_particle_system_defaults();
+    let operator_defaults = pcf_defaults::get_default_operator_map();
+    let particle_system_defaults = pcf_defaults::get_particle_system_defaults();
 
     // vanilla PCFs have a set size, and we have to fit our particle systems into those PCFs. It doesn't matter which
     // PCF they land in so long as they fit. We're solving this using a best-fit bin packing algorithm.

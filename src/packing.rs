@@ -67,8 +67,30 @@ impl PcfBinMap {
                 continue;
             }
 
+            for particle_system in from.particle_systems() {
+                println!("name: {}", &particle_system.name);
+
+                if particle_system.name.starts_with('_') {
+                    println!("    skipping adding to exclusivity map");
+                    continue;
+                }
+
+                assert_ne!(from.symbols().base.contains("DmeElement"), from.symbols().base.contains("DmElement"));
+                assert!(self.system_names.insert(particle_system.name.clone()));
+            }
+
+            let estimated_symbols_size = bin.pcf.compute_encoded_symbols_size_after_merge(from);
+            let estimated_elements_size = bin.pcf.compute_encoded_elements_size_after_merge(from);
+            let estimated_root_size = bin.pcf.compute_encoded_root_attributes_size_after_merge(from);
+            let estimated_attributes_size = bin.pcf.compute_encoded_attributes_size_after_merge(from);
+
             bin.pcf.merged_in(from)?;
-            // self.system_names.extend(bin.pcf.particle_systems().iter().map(|system| system.name.clone()));
+
+            assert_eq!(bin.pcf.compute_encoded_symbols_size(), estimated_symbols_size);
+            assert_eq!(bin.pcf.compute_encoded_elements_size(), estimated_elements_size);
+            assert_eq!(bin.pcf.compute_encoded_root_attributes_size(), estimated_root_size);
+            assert_eq!(bin.pcf.compute_encoded_attributes_size(), estimated_attributes_size);
+            assert_eq!(bin.pcf.encoded_size(), estimated_size);
 
             packed = true;
             break;
