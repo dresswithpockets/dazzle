@@ -1,23 +1,29 @@
-//! Encode and decode Valve's binary particle config file format.
+//! Convert to a type-safe [`Pcf`] from Valve's Data Model eXchange format.
+//! 
+//! See [`dmx`].
 //!
 //! # Example
 //!
-//! Decode & modify a pcf file using a buffered reader:
+//! Parse a type-safe [`Pcf`].
 //! ```
-//!     use std::fs::{File, OpenOptions};
-//!     use std::io::{BufReader};
-//!
-//!     let mut file = File::open("particles.pcf").unwrap();
-//!     let mut file = BufReader::new(file);
-//!     let mut pcf = pcf::decode(&mut file).unwrap();
-//!     println!("particles.pcf has {} particle systems.", pcf.elements().len());
-//!     // modify pcf elements or attributes...
-//!     // ...
-//!
-//!     // Encode a pcf back into a file
-//!     let mut file = OpenOptions::new().create(true).write(true).open("new_particles.pcf").unwrap();
-//!     pcf.encode(&mut file).unwrap();
+//! #![feature(file_buffered)]
+//! # use bytes::Buf;
+//! # 
+//! # const EXAMPLE_PCF: &[u8] = include_bytes!("default_values.pcf");
+//! #
+//! # fn main() -> anyhow::Result<()> {
+//!     # let mut reader = EXAMPLE_PCF.reader();
+//!     let pcf = pcf::decode(&mut reader)?;
+//!     println!("particles.pcf has {} particle systems.", pcf.root().particle_systems().len());
+//!     // read/modify PCF data...
+//! #    Ok(())
+//! # }
 //! ```
+//! 
+//! See [`decode`] to decode a buffer into a [`Pcf`] directly.
+//! 
+//! See [`dmx::Dmx::encode`] to encode a [`dmx::Dmx`] into a buffer. You can convert a [`Pcf`] into [`dmx::Dmx`] freely
+//! with [`Pcf::into`].
 
 #![feature(buf_read_has_data_left)]
 #![feature(read_array)]
