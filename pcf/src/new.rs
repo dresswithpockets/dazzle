@@ -183,9 +183,21 @@ impl Pcf {
         symbols.child = find_idx(&symbols, "child");
 
         let mut root_attributes = self.root.attributes;
-        root_attributes.extend(
-            reindex_new_attributes(&old_to_new_string_idx, from.root.attributes),
-        );
+        for (name_idx, attribute) in from.root.attributes {
+            let name_idx = old_to_new_string_idx
+                .get(&name_idx)
+                .copied()
+                .expect("the attribute's name_idx should always match a value in the Pcf's string list");
+
+            if root_attributes.contains_key(&name_idx) {
+                continue;
+            }
+
+            root_attributes.insert(name_idx, attribute);
+        }
+        // root_attributes.extend(
+        //     reindex_new_attributes(&old_to_new_string_idx, from.root.attributes),
+        // );
 
         let mut particle_systems = Vec::from(self.root.particle_systems);
         let system_offset = particle_systems.len();
@@ -242,14 +254,25 @@ impl Pcf {
     }
 
     fn compute_encoded_size(&self) -> usize {
-        let version_size: usize = self.version.as_cstr_with_nul_terminator().to_bytes_with_nul().len();
+        self.compute_encoded_version_size() +
+            self.compute_encoded_symbols_size() +
+            self.compute_encoded_elements_size() +
+            self.compute_encoded_root_attributes_size() +
+            self.compute_encoded_attributes_size()
+    }
 
-        // there is a nul byte for every string when encoded, so we include that as well by adding .len()
-        let symbols_size: usize = size_of::<u16>()
+    pub fn compute_encoded_version_size(&self) -> usize {
+        self.version.as_cstr_with_nul_terminator().to_bytes_with_nul().len()
+    }
+
+    pub fn compute_encoded_symbols_size(&self) -> usize {
+        // symbols counter + strings with nul bytes
+        size_of::<u16>()
             + self.symbols.base.len()
-            + self.symbols.base.iter().map(|string| string.len()).sum::<usize>();
+            + self.symbols.base.iter().map(|string| string.len()).sum::<usize>()
+    }
 
-        // accounting for the element counter
+    pub fn compute_encoded_elements_size(&self) -> usize {
         let mut elements_size = 0;
 
         // 32-bit element counter
@@ -284,6 +307,10 @@ impl Pcf {
             }
         }
 
+        elements_size
+    }
+
+    pub fn compute_encoded_root_attributes_size(&self) -> usize {
         let mut attributes_size = 0;
 
         // the root elements 32-bit attribute counter
@@ -303,6 +330,12 @@ impl Pcf {
             // and the actual encoded size of each attribute
             attributes_size += attribute.get_encoded_size();
         }
+
+        attributes_size
+    }
+
+    pub fn compute_encoded_attributes_size(&self) -> usize {
+        let mut attributes_size = 0;
 
         // do the same for each element across all of our particle systems
         for system in &self.root.particle_systems {
@@ -415,28 +448,33 @@ impl Pcf {
             }
         }
 
-        version_size + symbols_size + elements_size + attributes_size
+        attributes_size
     }
 
     pub fn compute_merged_size(&self, from: &Self) -> usize {
+        self.compute_encoded_version_size() +
+            self.compute_encoded_symbols_size_after_merge(from) +
+            self.compute_encoded_elements_size_after_merge(from) +
+            self.compute_encoded_root_attributes_size_after_merge(from) +
+            self.compute_encoded_attributes_size_after_merge(from)
+    }
+
+    pub fn compute_encoded_symbols_size_after_merge(&self, from: &Self) -> usize {
         // size of all new symbols + a nul byte for each symbol, because these are encoded as c-strings
-        let new_symbols_size = from
-            .symbols
-            .base
+        let new_symbols_size = from.symbols.base
             .iter()
             .filter(|symbol| !self.symbols.base.contains(*symbol))
             .map(|symbol| symbol.len() + 1)
             .sum::<usize>();
 
-        let mut from_to_self_idx = HashMap::new();
-        for (from_idx, name) in from.symbols.base.iter().enumerate() {
-            if let Some(self_idx) = self.symbols.base.get_index_of(name) {
-                from_to_self_idx.insert(from_idx as SymbolIdx, self_idx as SymbolIdx);
-            }
-        }
+        self.compute_encoded_symbols_size() + new_symbols_size
+    }
 
-        // accounting for the element counter
+    pub fn compute_encoded_elements_size_after_merge(&self, from: &Self) -> usize {
         let mut elements_size = 0;
+
+        // N.B. we dont add element counter or root element size because they are already accounted for later, when we
+        // add compute_encoded_size() to our result
 
         // do the same for each element across all of our particle systems
         for system in &from.root.particle_systems {
@@ -464,18 +502,25 @@ impl Pcf {
             }
         }
 
+        self.compute_encoded_elements_size() + elements_size
+    }
+
+    pub fn compute_encoded_root_attributes_size_after_merge(&self, from: &Self) -> usize {
+        let mut from_to_self_idx = HashMap::new();
+        for (from_idx, name) in from.symbols.base.iter().enumerate() {
+            if let Some(self_idx) = self.symbols.base.get_index_of(name) {
+                from_to_self_idx.insert(from_idx as SymbolIdx, self_idx as SymbolIdx);
+            }
+        }
+
         let mut attributes_size = 0;
 
         // the root element's particle system definitions will become an attribute
         attributes_size += from.root.particle_systems.len() * size_of::<ElementIdx>();
 
         for (name_idx, attribute) in &from.root.attributes {
-            let Some(name_idx) = from_to_self_idx.get(name_idx) else {
-                continue;
-            };
-
             // only include attributes from `from` that don't already exist in `self`
-            if self.root.attributes.contains_key(name_idx) {
+            if let Some(name_idx) = from_to_self_idx.get(name_idx) && self.root.attributes.contains_key(name_idx) {
                 continue;
             }
 
@@ -486,6 +531,12 @@ impl Pcf {
             // and the actual encoded size of each attribute
             attributes_size += attribute.get_encoded_size();
         }
+
+        self.compute_encoded_root_attributes_size() + attributes_size
+    }
+
+    pub fn compute_encoded_attributes_size_after_merge(&self, from: &Self) -> usize {
+        let mut attributes_size = 0;
 
         // do the same for each element across all of our particle systems
         for system in &from.root.particle_systems {
@@ -598,7 +649,7 @@ impl Pcf {
             }
         }
 
-        self.compute_encoded_size() + new_symbols_size + elements_size + attributes_size
+        self.compute_encoded_attributes_size() + attributes_size
     }
 
     /// Consumes the [`Pcf`], splitting it up into multiple [`Pcf`]s. Each [`Pcf`] will only contain
