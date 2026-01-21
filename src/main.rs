@@ -37,15 +37,17 @@ mod pcf_defaults;
 mod vpk_writer;
 
 use std::{
-    fs::{self, File, Metadata},
+    fs::{self, File},
     io::{self},
     process,
 };
 
 use bytes::{Buf, BufMut, BytesMut};
 use dmx::Dmx;
-use hashbrown::HashSet;
+use hashbrown::{HashMap};
+use pcf::Pcf;
 use rayon::prelude::*;
+use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
 use crate::addon::Sources;
@@ -65,24 +67,102 @@ const APP_ORG: &str = "dresswithpockets";
 const APP_NAME: &str = "tf2dazzle";
 const PARTICLE_SYSTEM_MAP: &str = include_str!("particle_system_map.json");
 
-
-struct VanillaPcfInfo {
-    vanilla_pcfs: Vec<VanillaPcf>,
-    pcfs_with_dx80: HashSet<String>,
-    pcfs_with_dx90: HashSet<String>,
+struct VanillaPcfGroup {
+    default: VanillaPcf,
+    dx80: Option<VanillaPcf>,
+    dx90_slow: Option<VanillaPcf>,
 }
 
 struct VanillaPcf {
     name: String,
-    pcf: pcf::new::Pcf,
-    metadata: Metadata,
+    pcf: Pcf,
+    size: u64,
 }
 
-fn get_vanilla_pcf_info() -> Result<VanillaPcfInfo, io::Error> {
+#[derive(Debug, Error)]
+enum VanillaPcfError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+
+    #[error(transparent)]
+    Decode(#[from] pcf::DecodeError),
+}
+
+fn get_vanilla_pcf_groups_from_manifest() -> Result<Vec<VanillaPcfGroup>, VanillaPcfError> {
+    let mut dx80_names = HashMap::new();
+    let mut dx90_slow_names = HashMap::new();
+
+    let mut entries = Vec::new();
+    for name in pcf_defaults::PARTICLES_MANIFEST {
+        let file_path = format!("backup/tf_{name}");
+        let size = fs::metadata(&file_path)?.len();
+        entries.push((name, file_path, size));
+
+        let dx80_name = format!("{}_dx80.pcf", name.trim_suffix(".pcf"));
+        let file_path = format!("backup/tf_{dx80_name}");
+        if fs::exists(&file_path)? {
+            let size = fs::metadata(&file_path)?.len();
+            dx80_names.insert(name.to_string(), (name, file_path, size));
+        }
+
+        let dx90_name = format!("{}_dx90_slow.pcf", name.trim_suffix(".pcf"));
+        let file_path = format!("backup/tf_{dx90_name}");
+        if fs::exists(&file_path)? {
+            let size = fs::metadata(&file_path)?.len();
+            dx90_slow_names.insert(name.to_string(), (name, file_path, size));
+        }
+    }
+
+    entries
+        .into_par_iter()
+        .map(|(name, file_path, size)| -> Result<VanillaPcfGroup, VanillaPcfError> {
+            println!("Found {name}. Decoding...");
+            let mut reader = File::open_buffered(file_path)?;
+            let pcf = pcf::decode(&mut reader)?;
+
+            let mut group = VanillaPcfGroup {
+                default: VanillaPcf {
+                    name: name.to_string(),
+                    pcf,
+                    size,
+                },
+                dx80: None,
+                dx90_slow: None,
+            };
+
+            if let Some((name, file_path, size)) = dx80_names.get(&group.default.name) {
+                println!("    Found dx80 variant, {name}. Decoding...");
+                let mut reader = File::open_buffered(file_path)?;
+                let pcf = pcf::decode(&mut reader)?;
+
+                group.dx80 = Some(VanillaPcf {
+                    name: name.to_string(),
+                    pcf,
+                    size: *size,
+                })
+            }
+
+            if let Some((name, file_path, size)) = dx90_slow_names.get(&group.default.name) {
+                println!("    Found dx90 variant, {name}. Decoding...");
+                let mut reader = File::open_buffered(file_path)?;
+                let pcf = pcf::decode(&mut reader)?;
+
+                group.dx90_slow = Some(VanillaPcf {
+                    name: name.to_string(),
+                    pcf,
+                    size: *size,
+                })
+            }
+
+            Ok(group)
+        })
+        .collect()
+}
+
+fn get_vanilla_pcf_groups() -> Result<Vec<VanillaPcfGroup>, VanillaPcfError> {
     let read_dir = fs::read_dir("backup/tf_particles")?;
-    let mut with_dx80 = HashSet::new();
-    let mut with_dx90 = HashSet::new();
-    let mut with_high = HashSet::new();
+    let mut dx80_names = HashMap::new();
+    let mut dx90_slow_names = HashMap::new();
 
     let mut entries = Vec::new();
     for entry in read_dir {
@@ -95,65 +175,85 @@ fn get_vanilla_pcf_info() -> Result<VanillaPcfInfo, io::Error> {
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
 
-        if let Some(stripped) = file_name.strip_suffix("_dx80.pcf") {
-            with_dx80.insert("particles/".to_string() + stripped + ".pcf");
+        // as far as I can tell, `_high` variants are just never chosen by the engine.
+        if file_name.ends_with("_high.pcf") || file_name.contains("test") || file_name.contains("smoke_blackbillow") || file_name.contains("level_fx") {
             continue;
         }
 
-        if let Some(stripped) = file_name.strip_suffix("_dx90.pcf") {
-            with_dx90.insert("particles/".to_string() + stripped + ".pcf");
+        let name = format!("particles/{file_name}");
+
+        if let Some(stripped) = file_name.strip_suffix("_dx80.pcf") {
+            dx80_names.insert(
+                format!("particles/{stripped}.pcf"),
+                (name, entry.path(), metadata.len()),
+            );
+
             continue;
         }
 
         if let Some(stripped) = file_name.strip_suffix("_dx90_slow.pcf") {
-            with_dx90.insert("particles/".to_string() + stripped + ".pcf");
+            dx90_slow_names.insert(
+                format!("particles/{stripped}.pcf"),
+                (name, entry.path(), metadata.len()),
+            );
+
             continue;
         }
 
-        if let Some(stripped) = file_name.strip_suffix("_high.pcf") {
-            with_high.insert("particles/".to_string() + stripped + ".pcf");
-            continue;
-        }
-
-        if let Some(stripped) = file_name.strip_suffix("_mvm.pcf") {
-            with_high.insert("particles/".to_string() + stripped + ".pcf");
-            continue;
-        }
-
-        let name = "particles/".to_string() + &file_name;
-
-        entries.push((name, entry.path(), metadata));
+        entries.push((name, entry.path(), metadata.len()));
     }
 
-    // try skipping all files with a matching dx80/dx90 pcf - so they remain identical to vanilla.
-    // let entries: Vec<_> = entries.into_iter().filter(|(name, _, _)| !with_dx80.contains(name) && !with_dx90.contains(name)).collect();
-
-    let pcfs: Result<Vec<VanillaPcf>, io::Error> = entries
+    entries
         .into_par_iter()
-        .map(|(name, file_path, metadata)| -> Result<VanillaPcf, io::Error> {
-            println!("decoding {name} as DMX and converting to PCF");
+        .map(|(name, file_path, size)| -> Result<VanillaPcfGroup, VanillaPcfError> {
+            println!("Found {name}. Decoding...");
             let mut reader = File::open_buffered(file_path)?;
-            let dmx = dmx::decode(&mut reader).unwrap();
-            let pcf = pcf::new::Pcf::try_from(dmx).unwrap();
+            let pcf = pcf::decode(&mut reader)?;
 
-            Ok(VanillaPcf { name, pcf, metadata })
+            let mut group = VanillaPcfGroup {
+                default: VanillaPcf {
+                    name,
+                    pcf,
+                    size,
+                },
+                dx80: None,
+                dx90_slow: None,
+            };
+
+            if let Some((name, file_path, size)) = dx80_names.get(&group.default.name) {
+                println!("    Found dx80 variant, {name}. Decoding...");
+                let mut reader = File::open_buffered(file_path)?;
+                let pcf = pcf::decode(&mut reader)?;
+
+                group.dx80 = Some(VanillaPcf {
+                    name: name.clone(),
+                    pcf,
+                    size: *size,
+                })
+            }
+
+            if let Some((name, file_path, size)) = dx90_slow_names.get(&group.default.name) {
+                println!("    Found dx90 variant, {name}. Decoding...");
+                let mut reader = File::open_buffered(file_path)?;
+                let pcf = pcf::decode(&mut reader)?;
+
+                group.dx90_slow = Some(VanillaPcf {
+                    name: name.clone(),
+                    pcf,
+                    size: *size,
+                })
+            }
+
+            Ok(group)
         })
-        .collect();
-
-    Ok(VanillaPcfInfo {
-        vanilla_pcfs: pcfs?,
-        pcfs_with_dx80: with_dx80,
-        pcfs_with_dx90: with_dx90,
-    })
+        .collect()
 }
 
-fn default_bin_from(vanilla_pcf: &VanillaPcf) -> PcfBin {
-    let pcf = pcf::new::Pcf::new_empty_from(&vanilla_pcf.pcf);
-
+fn default_bin_from(group: &VanillaPcfGroup) -> PcfBin {
     PcfBin {
-        capacity: vanilla_pcf.metadata.len(),
-        name: vanilla_pcf.name.clone(),
-        pcf,
+        capacity: group.default.size,
+        name: group.default.name.clone(),
+        pcf: Pcf::new_empty_from(&group.default.pcf),
     }
 }
 
@@ -167,15 +267,24 @@ fn next() -> anyhow::Result<()> {
     // vanilla PCFs have a set size, and we have to fit our particle systems into those PCFs. It doesn't matter which
     // PCF they land in so long as they fit. We're solving this using a best-fit bin packing algorithm.
     println!("loading vanilla pcf info");
-    let vanilla_pcf_info = get_vanilla_pcf_info()?;
-    let vanilla_pcfs: Vec<_> = vanilla_pcf_info.vanilla_pcfs
+    let vanilla_groups = get_vanilla_pcf_groups_from_manifest()?;
+    let vanilla_pcfs: Vec<_> = vanilla_groups
         .into_par_iter()
-        .map(|vanilla_pcf| {
-            println!("stripping {} of unecessary defaults", vanilla_pcf.name);
-            let pcf = vanilla_pcf
-                .pcf
-                .defaults_stripped_nth(1000, &particle_system_defaults, &operator_defaults);
-            VanillaPcf { pcf, ..vanilla_pcf }
+        .filter(|group| group.dx80.is_none() && group.dx90_slow.is_none())
+        .map(|group| {
+            if pcf_defaults::PARTICLES_MANIFEST.iter().all(|el| *el != group.default.name) {
+                println!("warning! {} is not in particle manifest!", &group.default.name);
+            }
+
+            println!("stripping {} of unecessary defaults", &group.default.name);
+            let pcf = group.default.pcf.defaults_stripped_nth(1000, &particle_system_defaults, &operator_defaults);
+            VanillaPcfGroup {
+                default: VanillaPcf {
+                    pcf,
+                    ..group.default
+                },
+                ..group
+            }
         })
         .collect();
 
@@ -191,7 +300,7 @@ fn next() -> anyhow::Result<()> {
         "stripped PCF load: {}",
         vanilla_pcfs
             .iter()
-            .map(|vanilla_pcf| vanilla_pcf.pcf.encoded_size())
+            .map(|group| group.default.pcf.encoded_size())
             .sum::<usize>()
     );
 
@@ -199,7 +308,7 @@ fn next() -> anyhow::Result<()> {
     println!("getting vanilla particle system map");
     let vanilla_graphs: Vec<_> = vanilla_pcfs
         .into_iter()
-        .map(|vanilla_pcf| (vanilla_pcf.name, vanilla_pcf.pcf.into_connected()))
+        .map(|group| (group.default.name, group.default.pcf.into_connected()))
         .collect();
 
     println!("discovered {} vanilla particle systems", vanilla_graphs.len());
@@ -261,16 +370,16 @@ fn next() -> anyhow::Result<()> {
 
     // first we bin-pack our addon's custom particles.
     println!("bin-packing addon particles...");
-    // for addon in addons {
-    //     for (path, pcf) in addon.particle_files {
-    //         println!("stripping {path} of unecessary defaults");
-    //         let graph = pcf.into_connected();
-    //         for mut pcf in graph {
-    //             println!("bin-packing a graph with '{}' elements", pcf.particle_systems().len());
-    //             bins.pack_group(&mut pcf)?;
-    //         }
-    //     }
-    // }
+    for addon in addons {
+        for (path, pcf) in addon.particle_files {
+            println!("stripping {path} of unecessary defaults");
+            let graph = pcf.into_connected();
+            for mut pcf in graph {
+                println!("bin-packing a graph with '{}' elements", pcf.particle_systems().len());
+                bins.pack_group(&mut pcf)?;
+            }
+        }
+    }
 
     // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank
     // slate for our addons; so, we pack every vanilla particle system not present in the bins.
@@ -323,28 +432,6 @@ fn next() -> anyhow::Result<()> {
         let size = buffer.len() as u64;
         let mut reader = buffer.reader();
         app.tf_misc_vpk.patch_file(&bin.name, size, &mut reader)?;
-
-        if vanilla_pcf_info.pcfs_with_dx80.contains(&bin.name) {
-            let name = bin.name.trim_suffix(".pcf").to_string() + "_dx80.pcf";
-            let mut writer = BytesMut::new().writer();
-            dmx.encode(&mut writer)?;
-
-            let buffer = writer.into_inner();
-            let size = buffer.len() as u64;
-            let mut reader = buffer.reader();
-            app.tf_misc_vpk.patch_file(&name, size, &mut reader)?;
-        }
-
-        if vanilla_pcf_info.pcfs_with_dx90.contains(&bin.name) {
-            let name = bin.name.trim_suffix(".pcf").to_string() + "_dx90.pcf";
-            let mut writer = BytesMut::new().writer();
-            dmx.encode(&mut writer)?;
-
-            let buffer = writer.into_inner();
-            let size = buffer.len() as u64;
-            let mut reader = buffer.reader();
-            app.tf_misc_vpk.patch_file(&name, size, &mut reader)?;
-        }
     }
 
     Ok(())

@@ -68,7 +68,7 @@ impl PcfBinMap {
             }
 
             for particle_system in from.particle_systems() {
-                println!("name: {}", &particle_system.name);
+                // println!("name: {}", &particle_system.name);
 
                 if particle_system.name.starts_with('_') {
                     println!("    skipping adding to exclusivity map");
@@ -76,7 +76,7 @@ impl PcfBinMap {
                 }
 
                 assert_ne!(from.symbols().base.contains("DmeElement"), from.symbols().base.contains("DmElement"));
-                assert!(self.system_names.insert(particle_system.name.clone()));
+                // assert!(self.system_names.insert(particle_system.name.clone()));
             }
 
             let estimated_symbols_size = bin.pcf.compute_encoded_symbols_size_after_merge(from);
