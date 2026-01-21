@@ -38,7 +38,7 @@ mod vpk_writer;
 
 use std::{
     fs::{self, File},
-    io::{self},
+    io::{self, ErrorKind},
     process,
 };
 
@@ -149,96 +149,6 @@ fn get_vanilla_pcf_groups_from_manifest() -> Result<Vec<VanillaPcfGroup>, Vanill
 
                 group.dx90_slow = Some(VanillaPcf {
                     name: name.to_string(),
-                    pcf,
-                    size: *size,
-                })
-            }
-
-            Ok(group)
-        })
-        .collect()
-}
-
-fn get_vanilla_pcf_groups() -> Result<Vec<VanillaPcfGroup>, VanillaPcfError> {
-    let read_dir = fs::read_dir("backup/tf_particles")?;
-    let mut dx80_names = HashMap::new();
-    let mut dx90_slow_names = HashMap::new();
-
-    let mut entries = Vec::new();
-    for entry in read_dir {
-        let entry = entry?;
-        let metadata = entry.metadata()?;
-        if !metadata.is_file() {
-            continue;
-        }
-
-        let file_name = entry.file_name();
-        let file_name = file_name.to_string_lossy();
-
-        // as far as I can tell, `_high` variants are just never chosen by the engine.
-        if file_name.ends_with("_high.pcf") || file_name.contains("test") || file_name.contains("smoke_blackbillow") || file_name.contains("level_fx") {
-            continue;
-        }
-
-        let name = format!("particles/{file_name}");
-
-        if let Some(stripped) = file_name.strip_suffix("_dx80.pcf") {
-            dx80_names.insert(
-                format!("particles/{stripped}.pcf"),
-                (name, entry.path(), metadata.len()),
-            );
-
-            continue;
-        }
-
-        if let Some(stripped) = file_name.strip_suffix("_dx90_slow.pcf") {
-            dx90_slow_names.insert(
-                format!("particles/{stripped}.pcf"),
-                (name, entry.path(), metadata.len()),
-            );
-
-            continue;
-        }
-
-        entries.push((name, entry.path(), metadata.len()));
-    }
-
-    entries
-        .into_par_iter()
-        .map(|(name, file_path, size)| -> Result<VanillaPcfGroup, VanillaPcfError> {
-            println!("Found {name}. Decoding...");
-            let mut reader = File::open_buffered(file_path)?;
-            let pcf = pcf::decode(&mut reader)?;
-
-            let mut group = VanillaPcfGroup {
-                default: VanillaPcf {
-                    name,
-                    pcf,
-                    size,
-                },
-                dx80: None,
-                dx90_slow: None,
-            };
-
-            if let Some((name, file_path, size)) = dx80_names.get(&group.default.name) {
-                println!("    Found dx80 variant, {name}. Decoding...");
-                let mut reader = File::open_buffered(file_path)?;
-                let pcf = pcf::decode(&mut reader)?;
-
-                group.dx80 = Some(VanillaPcf {
-                    name: name.clone(),
-                    pcf,
-                    size: *size,
-                })
-            }
-
-            if let Some((name, file_path, size)) = dx90_slow_names.get(&group.default.name) {
-                println!("    Found dx90 variant, {name}. Decoding...");
-                let mut reader = File::open_buffered(file_path)?;
-                let pcf = pcf::decode(&mut reader)?;
-
-                group.dx90_slow = Some(VanillaPcf {
-                    name: name.clone(),
                     pcf,
                     size: *size,
                 })
@@ -372,13 +282,14 @@ fn next() -> anyhow::Result<()> {
     println!("bin-packing addon particles...");
     for addon in addons {
         for (path, pcf) in addon.particle_files {
-            println!("stripping {path} of unecessary defaults");
+            // println!("stripping {path} of unecessary defaults");
             let graph = pcf.into_connected();
             for mut pcf in graph {
-                println!("bin-packing a graph with '{}' elements", pcf.particle_systems().len());
                 bins.pack_group(&mut pcf)?;
             }
         }
+
+        copy_addon_structure(&addon.content_path, &app.working_vpk_dir)?;
     }
 
     // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank
@@ -433,6 +344,10 @@ fn next() -> anyhow::Result<()> {
         let mut reader = buffer.reader();
         app.tf_misc_vpk.patch_file(&bin.name, size, &mut reader)?;
     }
+
+    println!("creating _dazzle_addons.vpk...");
+    // we can finally generate our _dazzle_addons VPKs from our addon contents.
+    vpk_writer::pack_directory(&app.working_vpk_dir, &app.tf_custom_dir, "_dazzle_addons", SPLIT_BY_2GB)?;
 
     Ok(())
 }
@@ -535,9 +450,20 @@ fn copy_addon_structure(in_dir: &Utf8PlatformPath, out_dir: &Utf8PlatformPath) -
                 let path = entry.path();
                 let path = paths::to_typed(&path).absolutize()?;
                 let new_out_dir = out_dir.join(path.strip_prefix(in_dir)?);
-                fs::create_dir(&new_out_dir)?;
+                fs::create_dir(&new_out_dir).or_else(|result| {
+                    if result.kind() == ErrorKind::AlreadyExists {
+                        Ok(())
+                    } else {
+                        Err(result)
+                    }
+                })?;
 
                 visit(&path, &new_out_dir)?;
+            } else if metadata.is_file() {
+                let path = entry.path();
+                let path = paths::to_typed(&path).absolutize()?;
+                let new_out_path = out_dir.join(path.strip_prefix(in_dir)?);
+                fs::copy(&path, &new_out_path)?;
             }
         }
 

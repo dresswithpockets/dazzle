@@ -30,11 +30,11 @@ pub struct Addon {
     /// the path to the source file (vpk) or folder of the addon content
     pub source_path: Utf8PlatformPathBuf,
 
-    /// A map of "{addon}/materials"-relative VTF paths to absolute paths, provided by the addon
-    pub texture_files: HashMap<String, Utf8PlatformPathBuf>,
+    // /// A map of "{addon}/materials"-relative VTF paths to absolute paths, provided by the addon
+    // pub texture_files: HashMap<String, Utf8PlatformPathBuf>,
 
-    /// A map of "{addon}/materials/"-relative VMT paths to decoded VMTs, provided by the addon
-    pub relative_material_files: HashMap<String, Material>,
+    // /// A map of "{addon}/materials/"-relative VMT paths to decoded VMTs, provided by the addon
+    // pub relative_material_files: HashMap<String, Material>,
 
     /// A map of absolute PCF paths to decoded PCFs, provided by the addon
     pub particle_files: HashMap<Utf8PlatformPathBuf, pcf::new::Pcf>,
@@ -146,22 +146,22 @@ impl Extracted {
             particle_files.insert(path.into_owned(), pcf);
         }
 
-        let materials_path = self.content_path.join_checked("materials")?;
-        let relative_material_files = Self::get_material_files(&materials_path)?;
+        // let materials_path = self.content_path.join_checked("materials")?;
+        // let relative_material_files = Self::get_material_files(&materials_path)?;
 
-        let mut texture_files = HashMap::new();
-        for path in glob(&format!("{}/**/*.vtf", &materials_path))? {
-            let path = path?;
-            let path = paths::to_typed(&path).absolutize()?;
-            let relative_path = path.strip_prefix(&materials_path)?;
-            texture_files.insert(relative_path.to_string(), path);
-        }
+        // let mut texture_files = HashMap::new();
+        // for path in glob(&format!("{}/**/*.vtf", &materials_path))? {
+        //     let path = path?;
+        //     let path = paths::to_typed(&path).absolutize()?;
+        //     let relative_path = path.strip_prefix(&materials_path)?;
+        //     texture_files.insert(relative_path.to_string(), path);
+        // }
 
         Ok(Addon {
             content_path: self.content_path,
             source_path: self.source_path,
-            texture_files,
-            relative_material_files,
+            // texture_files,
+            // relative_material_files,
             particle_files,
         })
     }
