@@ -34,28 +34,37 @@ mod packing;
 pub mod patch;
 mod paths;
 mod pcf_defaults;
-mod vpk_writer;
 mod styles;
-mod view_tf_dir;
 mod view_installer;
+mod view_tf_dir;
+mod vpk_writer;
 
 use core::f32;
 use std::{
-    collections::BTreeMap, env::{self, consts::OS}, fs::{self, File}, io::{self, ErrorKind}, path::PathBuf, process, sync::Arc
+    collections::BTreeMap,
+    env::{self, consts::OS},
+    fs::{self, File},
+    io::{self, ErrorKind},
+    path::PathBuf,
+    process,
+    sync::Arc,
 };
 
 use bytes::{Buf, BufMut, BytesMut};
 use directories::ProjectDirs;
 use dmx::Dmx;
 use eframe::egui::{self, Align2, CentralPanel, FontFamily, RichText, TextEdit, TextStyle, Vec2b, Window};
-use hashbrown::{HashMap};
+use hashbrown::HashMap;
 use pcf::Pcf;
 use rayon::prelude::*;
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
-use crate::{addon::Sources, app::{App, BuildError}};
 use crate::app::AppBuilder;
+use crate::{
+    addon::Sources,
+    app::{App, BuildError},
+};
 use crate::{
     packing::{PcfBin, PcfBinMap},
     patch::PatchVpkExt,
@@ -130,7 +139,7 @@ const PARTICLE_SYSTEM_MAP: &str = include_str!("particle_system_map.json");
 const APP_ID: &str = "net.dresswithpockets.dazzletf2";
 
 fn present_fatal_error_dialogue(err: BuildError) {
-        let native_options = eframe::NativeOptions {
+    let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_app_id(APP_ID)
             .with_inner_size([640.0, 360.0])
@@ -139,33 +148,31 @@ fn present_fatal_error_dialogue(err: BuildError) {
         ..Default::default()
     };
 
-    let _ = eframe::run_simple_native(
-        APP_ID,
-        native_options.clone(),
-        move |ctx, _frame| {
-            egui_extras::install_image_loaders(ctx);
-            CentralPanel::default().show(ctx, |ui| {
-                Window::new("fatal error")
-                    .title_bar(false)
-                    .min_size((426.0, 240.0))
-                    .resizable(false)
-                    .collapsible(false)
-                    .movable(false)
-                    .anchor(Align2::CENTER_CENTER, (0.0, 0.0))
-                    .show(ui.ctx(), |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.image(egui::include_image!("static/images/warning.png"));
-                            ui.heading(format!("Dazzle tried to start up but there was an error preventing it from continuing: \n\n{err}"))
-                        });
-                        ui.vertical_centered(|ui| {
-                            if ui.button("Close").clicked() {
-                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
-                        })
+    let _ = eframe::run_simple_native(APP_ID, native_options.clone(), move |ctx, _frame| {
+        egui_extras::install_image_loaders(ctx);
+        CentralPanel::default().show(ctx, |ui| {
+            Window::new("fatal error")
+                .title_bar(false)
+                .min_size((426.0, 240.0))
+                .resizable(false)
+                .collapsible(false)
+                .movable(false)
+                .anchor(Align2::CENTER_CENTER, (0.0, 0.0))
+                .show(ui.ctx(), |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.image(egui::include_image!("static/images/warning.png"));
+                        ui.heading(format!(
+                            "Dazzle tried to start up but there was an error preventing it from continuing: \n\n{err}"
+                        ))
                     });
-            });
-        }
-    );
+                    ui.vertical_centered(|ui| {
+                        if ui.button("Close").clicked() {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    })
+                });
+        });
+    });
 }
 
 fn main() -> anyhow::Result<()> {
@@ -177,29 +184,29 @@ fn main() -> anyhow::Result<()> {
     */
 
     /*
-        Setup/Ensure base data_local_dir
+       Setup/Ensure base data_local_dir
 
-        Are we in first time setup? (config.toml must exist in data dir)
-            show first time setup with tf/ dir chooser & save config.toml
+       Are we in first time setup? (config.toml must exist in data dir)
+           show first time setup with tf/ dir chooser & save config.toml
 
-        Are we configured?
-            Is our version compatible with the version indicated by config.toml?
-                if not, try upgrading. If upgrading fails, show first-time setup again
+       Are we configured?
+           Is our version compatible with the version indicated by config.toml?
+               if not, try upgrading. If upgrading fails, show first-time setup again
 
-            Is the tf/ dir still valid?
-                if not, show first time setup
+           Is the tf/ dir still valid?
+               if not, show first time setup
 
-            Create working directories if they dont exist (content, vpk, addons)
-            Setup path strings (backup, tf/custom, tf/tf2_misc_dir.vpk)
-            Show installer viewport
-     */
+           Create working directories if they dont exist (content, vpk, addons)
+           Setup path strings (backup, tf/custom, tf/tf2_misc_dir.vpk)
+           Show installer viewport
+    */
 
     let app_dirs = match AppBuilder::new().build() {
         Ok(app) => app,
         Err(err) => {
             present_fatal_error_dialogue(err);
             process::exit(1);
-        },
+        }
     };
 
     let native_options = eframe::NativeOptions {
@@ -218,8 +225,12 @@ fn main() -> anyhow::Result<()> {
         native_options.clone(),
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(view_tf_dir::TfDirPicker::new(cc, &mut tf_dir, get_default_platform_tf_dir())))
-        })
+            Ok(Box::new(view_tf_dir::TfDirPicker::new(
+                cc,
+                &mut tf_dir,
+                get_default_platform_tf_dir(),
+            )))
+        }),
     );
 
     let Some(tf_dir) = tf_dir else {
@@ -232,8 +243,12 @@ fn main() -> anyhow::Result<()> {
         native_options,
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(view_installer::SimpleInstaller::new(&cc.egui_ctx, app_dirs, tf_dir)))
-        })
+            Ok(Box::new(view_installer::SimpleInstaller::new(
+                &cc.egui_ctx,
+                app_dirs,
+                tf_dir,
+            )))
+        }),
     );
 
     return Ok(());
@@ -335,7 +350,7 @@ fn get_default_platform_tf_dir() -> String {
                 Ok(path) => path.into_string(),
                 Err(_) => String::default(),
             }
-        },
+        }
         Err(_) => String::default(),
     }
 }
@@ -345,13 +360,21 @@ fn get_default_platform_tf_dir() -> String {
     match env::var("HOME") {
         Ok(home) => {
             let mut path = Utf8PlatformPathBuf::from(home);
-            path.extend([".local", "share", "Steam", "steamapps", "common", "Team Fortress 2", "tf"]);
+            path.extend([
+                ".local",
+                "share",
+                "Steam",
+                "steamapps",
+                "common",
+                "Team Fortress 2",
+                "tf",
+            ]);
 
             match path.absolutize() {
                 Ok(path) => path.into_string(),
                 Err(_) => String::default(),
             }
-        },
+        }
         Err(_) => String::default(),
     }
 }

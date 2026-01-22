@@ -35,7 +35,6 @@ pub struct Addon {
 
     // /// A map of "{addon}/materials/"-relative VMT paths to decoded VMTs, provided by the addon
     // pub relative_material_files: HashMap<String, Material>,
-
     /// A map of absolute PCF paths to decoded PCFs, provided by the addon
     pub particle_files: HashMap<Utf8PlatformPathBuf, pcf::new::Pcf>,
 }

@@ -1,4 +1,8 @@
-use std::{borrow::Cow, path::{Path, PathBuf}, str::Utf8Error};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+    str::Utf8Error,
+};
 
 use typed_path::{PlatformPath, Utf8PlatformPath, Utf8PlatformPathBuf};
 

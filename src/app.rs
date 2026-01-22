@@ -1,6 +1,6 @@
-use std::{fs, io};
 use std::str::FromStr;
 use std::{collections::HashMap, ffi::CString};
+use std::{fs, io};
 
 use directories::ProjectDirs;
 use single_instance::SingleInstance;

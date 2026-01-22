@@ -3,7 +3,8 @@ use glob::glob;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Seek, SeekFrom},
-    path::{Path, PathBuf}, str::FromStr,
+    path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use relative_path::RelativePathBuf;

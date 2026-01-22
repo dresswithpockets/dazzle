@@ -1,6 +1,9 @@
 use eframe::egui::{self, Align2, TextEdit, TextStyle, Vec2b};
+use std::{
+    fs,
+    io::{self, ErrorKind},
+};
 use thiserror::Error;
-use std::{fs, io::{self, ErrorKind}};
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
 use crate::styles;
@@ -12,7 +15,11 @@ pub(crate) struct TfDirPicker<'a> {
 }
 
 impl<'a> TfDirPicker<'a> {
-    pub(crate) fn new(cc: &eframe::CreationContext<'_>, output: &'a mut Option<Utf8PlatformPathBuf>, picked_dir: String) -> Self {
+    pub(crate) fn new(
+        cc: &eframe::CreationContext<'_>,
+        output: &'a mut Option<Utf8PlatformPathBuf>,
+        picked_dir: String,
+    ) -> Self {
         styles::configure_fonts(&cc.egui_ctx);
         styles::configure_text_styles(&cc.egui_ctx);
 
@@ -135,8 +142,8 @@ pub(crate) enum TfValidationError {
     MissingVpkPermissions,
 }
 
-pub(crate) fn validate(path: &Utf8PlatformPath) -> Result<(), TfValidationError> { 
-    // the picked directory must be a valid tf2 installation. We have the following heuristics to 
+pub(crate) fn validate(path: &Utf8PlatformPath) -> Result<(), TfValidationError> {
+    // the picked directory must be a valid tf2 installation. We have the following heuristics to
     // ensure that this is the case:
     //   - {picked_dir}/tf2_misc_dir.vpk exists, is a file, is a valid VPK index, and we have read/write permissions
     //   - {picked_dir}/custom exists, and is a dir, and we have read/write permissions
@@ -145,91 +152,73 @@ pub(crate) fn validate(path: &Utf8PlatformPath) -> Result<(), TfValidationError>
         return Err(TfValidationError::InvalidPath);
     }
 
-    let metadata = fs::metadata(path).map_err(|err| 
-        match err.kind() {
-            ErrorKind::NotFound => TfValidationError::DoesntExist,
-            ErrorKind::PermissionDenied => TfValidationError::PermissionDenied,
-            _ => TfValidationError::Io(err),
-        }
-    )?;
+    let metadata = fs::metadata(path).map_err(|err| match err.kind() {
+        ErrorKind::NotFound => TfValidationError::DoesntExist,
+        ErrorKind::PermissionDenied => TfValidationError::PermissionDenied,
+        _ => TfValidationError::Io(err),
+    })?;
 
     if !metadata.is_dir() {
         return Err(TfValidationError::NotADirectory);
     }
 
     let custom_dir = path.join("custom");
-    let metadata = fs::metadata(&custom_dir).map_err(|err| 
-        match err.kind() {
-            ErrorKind::NotFound => TfValidationError::MissingCustomFolder,
-            ErrorKind::PermissionDenied => TfValidationError::MissingCustomFolderPermissions,
-            _ => TfValidationError::Io(err),
-        }
-    )?;
+    let metadata = fs::metadata(&custom_dir).map_err(|err| match err.kind() {
+        ErrorKind::NotFound => TfValidationError::MissingCustomFolder,
+        ErrorKind::PermissionDenied => TfValidationError::MissingCustomFolderPermissions,
+        _ => TfValidationError::Io(err),
+    })?;
 
     if !metadata.is_dir() {
         return Err(TfValidationError::CustomNotADirectory);
     }
 
-    let readable = permissions::is_readable(&custom_dir)
-        .map_err(|err| {
-            match err.kind() {
-                ErrorKind::NotFound => TfValidationError::MissingCustomFolder,
-                ErrorKind::PermissionDenied => TfValidationError::MissingCustomFolderPermissions,
-                _ => TfValidationError::Io(err),
-            }
-        })?;
+    let readable = permissions::is_readable(&custom_dir).map_err(|err| match err.kind() {
+        ErrorKind::NotFound => TfValidationError::MissingCustomFolder,
+        ErrorKind::PermissionDenied => TfValidationError::MissingCustomFolderPermissions,
+        _ => TfValidationError::Io(err),
+    })?;
 
     if !readable {
         return Err(TfValidationError::MissingCustomFolderPermissions);
     }
 
-    let writable = permissions::is_writable(&custom_dir)
-        .map_err(|err| {
-            match err.kind() {
-                ErrorKind::NotFound => TfValidationError::MissingCustomFolder,
-                ErrorKind::PermissionDenied => TfValidationError::MissingCustomFolderPermissions,
-                _ => TfValidationError::Io(err),
-            }
-        })?;
+    let writable = permissions::is_writable(&custom_dir).map_err(|err| match err.kind() {
+        ErrorKind::NotFound => TfValidationError::MissingCustomFolder,
+        ErrorKind::PermissionDenied => TfValidationError::MissingCustomFolderPermissions,
+        _ => TfValidationError::Io(err),
+    })?;
 
     if !writable {
         return Err(TfValidationError::MissingCustomFolderPermissions);
     }
 
     let tf2_misc_vpk = path.join("tf2_misc_dir.vpk");
-    let metadata = fs::metadata(&tf2_misc_vpk).map_err(|err| 
-        match err.kind() {
-            ErrorKind::NotFound => TfValidationError::MissingVpk,
-            ErrorKind::PermissionDenied => TfValidationError::MissingVpkPermissions,
-            _ => TfValidationError::Io(err),
-        }
-    )?;
+    let metadata = fs::metadata(&tf2_misc_vpk).map_err(|err| match err.kind() {
+        ErrorKind::NotFound => TfValidationError::MissingVpk,
+        ErrorKind::PermissionDenied => TfValidationError::MissingVpkPermissions,
+        _ => TfValidationError::Io(err),
+    })?;
 
     if !metadata.is_file() {
         return Err(TfValidationError::VpkNotAFile);
     }
 
-    let readable = permissions::is_readable(&tf2_misc_vpk)
-        .map_err(|err| {
-            match err.kind() {
-                ErrorKind::NotFound => TfValidationError::MissingVpk,
-                ErrorKind::PermissionDenied => TfValidationError::MissingVpkPermissions,
-                _ => TfValidationError::Io(err),
-            }
-        })?;
+    let readable = permissions::is_readable(&tf2_misc_vpk).map_err(|err| match err.kind() {
+        ErrorKind::NotFound => TfValidationError::MissingVpk,
+        ErrorKind::PermissionDenied => TfValidationError::MissingVpkPermissions,
+        _ => TfValidationError::Io(err),
+    })?;
 
     if !readable {
         return Err(TfValidationError::MissingVpkPermissions);
     }
 
-    let writable = permissions::is_writable(&tf2_misc_vpk)
-        .map_err(|err| {
-            match err.kind() {
-                ErrorKind::NotFound => TfValidationError::MissingVpk,
-                ErrorKind::PermissionDenied => TfValidationError::MissingVpkPermissions,
-                _ => TfValidationError::Io(err),
-            }
-        })?;
+    let writable = permissions::is_writable(&tf2_misc_vpk).map_err(|err| match err.kind() {
+        ErrorKind::NotFound => TfValidationError::MissingVpk,
+        ErrorKind::PermissionDenied => TfValidationError::MissingVpkPermissions,
+        _ => TfValidationError::Io(err),
+    })?;
 
     if !writable {
         return Err(TfValidationError::MissingVpkPermissions);

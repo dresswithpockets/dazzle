@@ -1,5 +1,5 @@
 //! Convert to a type-safe [`Pcf`] from Valve's Data Model eXchange format.
-//! 
+//!
 //! See [`dmx`].
 //!
 //! # Example
@@ -8,7 +8,7 @@
 //! ```
 //! #![feature(file_buffered)]
 //! # use bytes::Buf;
-//! # 
+//! #
 //! # const EXAMPLE_PCF: &[u8] = include_bytes!("default_values.pcf");
 //! #
 //! # fn main() -> anyhow::Result<()> {
@@ -19,9 +19,9 @@
 //! #    Ok(())
 //! # }
 //! ```
-//! 
+//!
 //! See [`decode`] to decode a buffer into a [`Pcf`] directly.
-//! 
+//!
 //! See [`dmx::Dmx::encode`] to encode a [`dmx::Dmx`] into a buffer. You can convert a [`Pcf`] into [`dmx::Dmx`] freely
 //! with [`Pcf::into`].
 

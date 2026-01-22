@@ -13,16 +13,12 @@ impl SimpleInstaller {
         styles::configure_fonts(ctx);
         styles::configure_text_styles(ctx);
 
-        Self {
-            app_dirs,
-            tf_dir,
-        }
+        Self { app_dirs, tf_dir }
     }
 }
 
 impl eframe::App for SimpleInstaller {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // todo!()
-        
     }
 }

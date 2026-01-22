@@ -75,7 +75,10 @@ impl PcfBinMap {
                     continue;
                 }
 
-                assert_ne!(from.symbols().base.contains("DmeElement"), from.symbols().base.contains("DmElement"));
+                assert_ne!(
+                    from.symbols().base.contains("DmeElement"),
+                    from.symbols().base.contains("DmElement")
+                );
                 // assert!(self.system_names.insert(particle_system.name.clone()));
             }
 

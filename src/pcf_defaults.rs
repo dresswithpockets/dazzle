@@ -65,7 +65,7 @@ pub(crate) fn get_default_operator_map() -> HashMap<&'static str, pcf::Attribute
         ("Visibility Alpha Scale maximum", 1.0.into()),
         ("Visibility Radius Scale minimum", 1.0.into()),
         ("Visibility Radius Scale maximum", 1.0.into()),
-        ("Visibility Camera Depth Bias", 0.0.into())
+        ("Visibility Camera Depth Bias", 0.0.into()),
     ])
 }
 
@@ -165,7 +165,7 @@ pub(crate) const PARTICLES_MANIFEST: [&str; 102] = [
     "particles/drg_pyro.pcf",
     "particles/xms.pcf",
     "particles/mvm.pcf",
-    "particles/doomsday_fx.pcf"	,
+    "particles/doomsday_fx.pcf",
     "particles/halloween.pcf",
     "particles/items_demo.pcf",
     "particles/items_engineer.pcf",
@@ -177,9 +177,9 @@ pub(crate) const PARTICLES_MANIFEST: [&str; 102] = [
     "particles/firstperson_weapon_fx.pcf",
     "particles/powerups.pcf",
     "particles/weapon_unusual_isotope.pcf",
-    "particles/weapon_unusual_hot.pcf"	,
-    "particles/weapon_unusual_cool.pcf"	,
-    "particles/weapon_unusual_energyorb.pcf"	,
+    "particles/weapon_unusual_hot.pcf",
+    "particles/weapon_unusual_cool.pcf",
+    "particles/weapon_unusual_energyorb.pcf",
     "particles/passtime.pcf",
     "particles/passtime_beam.pcf",
     "particles/passtime_tv_projection.pcf",
@@ -190,7 +190,7 @@ pub(crate) const PARTICLES_MANIFEST: [&str; 102] = [
     "particles/rankup.pcf",
     "particles/halloween2016_unusuals.pcf",
     "particles/rocketpack.pcf",
-    "particles/smoke_island_volcano.pcf"	,
+    "particles/smoke_island_volcano.pcf",
     "particles/halloween2018_unusuals.pcf",
     "particles/halloween2019_unusuals.pcf",
     "particles/smissmas2019_unusuals.pcf",
