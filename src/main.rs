@@ -35,11 +35,11 @@ mod packing;
 pub mod patch;
 mod paths;
 mod pcf_defaults;
+mod process;
 mod styles;
 mod view_installer;
 mod view_tf_dir;
 mod vpk_writer;
-mod process;
 
 use core::f32;
 use std::{

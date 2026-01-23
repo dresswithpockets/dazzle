@@ -1,9 +1,15 @@
+use atomic_counter::{AtomicCounter, RelaxedCounter};
+use eframe::egui;
+use eframe::egui::{
+    Align2, ProgressBar, TextFormat, WidgetText, Window,
+    text::{LayoutJob, TextWrapping},
+};
 use std::num::NonZero;
 use std::sync::mpsc;
-use std::sync::{Arc, mpsc::{Sender, Receiver}};
-use eframe::egui;
-use eframe::egui::{Align2, ProgressBar, TextFormat, text::{TextWrapping, LayoutJob}, Window, WidgetText};
-use atomic_counter::{AtomicCounter, RelaxedCounter};
+use std::sync::{
+    Arc,
+    mpsc::{Receiver, Sender},
+};
 
 #[derive(Clone)]
 pub(crate) struct ProcessView {
@@ -29,9 +35,8 @@ impl ProcessView {
                     self.latest_status = status
                 }
 
-                let mut job = LayoutJob::single_section(self.latest_status.clone(), TextFormat {
-                    ..Default::default()
-                });
+                let mut job =
+                    LayoutJob::single_section(self.latest_status.clone(), TextFormat { ..Default::default() });
 
                 job.wrap = TextWrapping {
                     max_rows: 1,
@@ -43,11 +48,7 @@ impl ProcessView {
                 ui.label(job);
 
                 let progress = f32::clamp((self.completed.get() as f32) / (self.steps as f32), 0.0, 1.0);
-                ui.add(
-                    ProgressBar::new(progress)
-                        .animate(true)
-                        .show_percentage()
-                );
+                ui.add(ProgressBar::new(progress).animate(true).show_percentage());
             });
     }
 }

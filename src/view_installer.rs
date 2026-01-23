@@ -1,26 +1,41 @@
-use std::{collections::HashMap, fs::{self, File}, io, num::NonZero, sync::{Arc, mpsc::{self, }}, thread::{self, JoinHandle}};
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io,
+    num::NonZero,
+    sync::{
+        Arc,
+        mpsc::{self},
+    },
+    thread::{self, JoinHandle},
+};
 
-use atomic_counter::{AtomicCounter};
-use eframe::egui::{self, CentralPanel, text::{}};
+use atomic_counter::AtomicCounter;
+use eframe::egui::{ self, CentralPanel};
 use pcf::Pcf;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use thiserror::Error;
 use typed_path::Utf8PlatformPathBuf;
 
-use crate::{addon::Sources, app::App, packing::{PcfBin, PcfBinMap}, pcf_defaults, process::{ProcessState, ProcessView}, styles};
+use crate::{
+    addon::Sources,
+    app::App,
+    packing::{PcfBin, PcfBinMap},
+    pcf_defaults,
+    process::{ProcessState, ProcessView},
+    styles,
+};
 
 struct LoadingVanillaPcfs {
     handle: JoinHandle<Result<Vec<VanillaPcfGroup>, VanillaPcfError>>,
 }
 
-struct ParsingAddons {
-
-}
+struct ParsingAddons {}
 
 enum State {
     LoadingVanillaPcfs(LoadingVanillaPcfs),
     ErrorLoadingVanillaPcfs(VanillaPcfError),
-    ParsingAddons()
+    ParsingAddons(),
 }
 
 struct Setup {
@@ -29,7 +44,7 @@ struct Setup {
     particle_system_defaults: Arc<HashMap<&'static str, pcf::Attribute>>,
 }
 
-// A LoadOperation is an operation which processes some state and has a UI presentation to reflect the current state 
+// A LoadOperation is an operation which processes some state and has a UI presentation to reflect the current state
 // of the operation. Like
 // - loading/processing setup files
 // - handling new addons when theyre imported
@@ -39,7 +54,7 @@ impl Setup {
     fn new(
         app_dirs: App,
         operator_defaults: HashMap<&'static str, pcf::Attribute>,
-        particle_system_defaults: HashMap<&'static str, pcf::Attribute>
+        particle_system_defaults: HashMap<&'static str, pcf::Attribute>,
     ) -> Self {
         Self {
             app_dirs,
@@ -64,13 +79,14 @@ impl Setup {
                 })
                 .map(|group| {
                     load_operation.push_status(format!("stripping {} of unnecessary defaults", &group.default.name));
-                    let pcf = group.default.pcf.defaults_stripped_nth(1000, &self.particle_system_defaults, &self.operator_defaults);
-                    
+                    let pcf = group.default.pcf.defaults_stripped_nth(
+                        1000,
+                        &self.particle_system_defaults,
+                        &self.operator_defaults,
+                    );
+
                     VanillaPcfGroup {
-                        default: VanillaPcf {
-                            pcf,
-                            ..group.default
-                        },
+                        default: VanillaPcf { pcf, ..group.default },
                         ..group
                     }
                 })
@@ -84,7 +100,7 @@ impl Setup {
             .map(|group| (group.default.name, group.default.pcf.into_connected()))
             .collect();
         load_operation.add_progress(30);
-        
+
         load_operation.push_status("Loading addons...");
         let sources = match Sources::read_dir(&self.app_dirs.addons_dir) {
             Ok(sources) => sources,
@@ -96,7 +112,8 @@ impl Setup {
             todo!();
         }
 
-        let extracted_addons: Vec<_> = sources.sources
+        let extracted_addons: Vec<_> = sources
+            .sources
             .into_par_iter()
             .map(|source| {
                 load_operation.push_status(format!("Extracting addon {}", source.name().unwrap_or_default()));
@@ -123,7 +140,9 @@ impl Setup {
         load_operation.push_status("Done!");
     }
 
-    fn get_vanilla_pcf_groups_from_manifest(load_operation: &ProcessState) -> Result<Vec<VanillaPcfGroup>, VanillaPcfError> {
+    fn get_vanilla_pcf_groups_from_manifest(
+        load_operation: &ProcessState,
+    ) -> Result<Vec<VanillaPcfGroup>, VanillaPcfError> {
         let mut dx80_names = HashMap::new();
         let mut dx90_slow_names = HashMap::new();
 
@@ -238,7 +257,6 @@ impl eframe::App for SimpleInstaller {
         });
     }
 }
-
 
 struct VanillaPcfGroup {
     default: VanillaPcf,

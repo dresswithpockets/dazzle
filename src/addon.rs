@@ -2,7 +2,11 @@ use anyhow::anyhow;
 use copy_dir::copy_dir;
 use glob::glob;
 use std::{
-    borrow::Cow, collections::HashMap, fs::{self, File, OpenOptions}, io::{self, Read}, path::{Path, PathBuf}
+    borrow::Cow,
+    collections::HashMap,
+    fs::{self, File, OpenOptions},
+    io::{self, Read},
+    path::{Path, PathBuf},
 };
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
