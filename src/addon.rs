@@ -2,10 +2,7 @@ use anyhow::anyhow;
 use copy_dir::copy_dir;
 use glob::glob;
 use std::{
-    collections::HashMap,
-    fs::{self, File, OpenOptions},
-    io::{self, Read},
-    path::{Path, PathBuf},
+    borrow::Cow, collections::HashMap, fs::{self, File, OpenOptions}, io::{self, Read}, path::{Path, PathBuf}
 };
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
@@ -67,6 +64,10 @@ pub struct Extracted {
 }
 
 impl Extracted {
+    pub(crate) fn name(&self) -> Option<&str> {
+        self.source_path.file_name()
+    }
+
     fn get_material_files(materials_path: &Utf8PlatformPath) -> anyhow::Result<HashMap<String, Material>> {
         fn value_to_texture_name(cow: &str) -> String {
             let owned = cow.to_owned();
@@ -247,6 +248,13 @@ impl Source {
             Ok(Source::Vpk(source.to_path_buf()))
         } else {
             Err(Error::UnsupportedAddonType(source.to_path_buf()))
+        }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Source::Folder(utf8_path_buf) => utf8_path_buf.file_name(),
+            Source::Vpk(utf8_path_buf) => utf8_path_buf.file_name(),
         }
     }
 

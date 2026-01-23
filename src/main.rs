@@ -27,6 +27,7 @@
 #![feature(cstr_display)]
 #![warn(clippy::pedantic)]
 #![feature(push_mut)]
+#![feature(lock_value_accessors)]
 
 pub mod addon;
 pub mod app;
@@ -38,6 +39,7 @@ mod styles;
 mod view_installer;
 mod view_tf_dir;
 mod vpk_writer;
+mod process;
 
 use core::f32;
 use std::{
@@ -46,7 +48,6 @@ use std::{
     fs::{self, File},
     io::{self, ErrorKind},
     path::PathBuf,
-    process,
     sync::Arc,
 };
 
@@ -205,7 +206,7 @@ fn main() -> anyhow::Result<()> {
         Ok(app) => app,
         Err(err) => {
             present_fatal_error_dialogue(err);
-            process::exit(1);
+            std::process::exit(1);
         }
     };
 
