@@ -97,7 +97,10 @@ impl Setup {
         let bins = PcfBinMap::new(vanilla_pcfs.iter().map(default_bin_from).collect());
         let vanilla_graphs: Vec<_> = vanilla_pcfs
             .into_iter()
-            .map(|group| (group.default.name, group.default.pcf.into_connected()))
+            .map(|group| {
+                load_operation.push_status(format!("Saparating {} into connected graphs...", group.default.name));
+                (group.default.name, group.default.pcf.into_connected())
+            })
             .collect();
         load_operation.add_progress(30);
 
