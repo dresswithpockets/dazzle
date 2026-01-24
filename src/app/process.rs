@@ -5,23 +5,45 @@ use eframe::egui::{
     text::{LayoutJob, TextWrapping},
 };
 use std::num::NonZero;
+use std::rc::Rc;
 use std::sync::mpsc;
 use std::sync::{
     Arc,
     mpsc::{Receiver, Sender},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct ProcessView {
     pub(crate) steps: usize,
     pub(crate) latest_status: String,
     pub(crate) completed: Arc<RelaxedCounter>,
-    pub(crate) status_receiver: Arc<Receiver<String>>,
+    pub(crate) status_receiver: Rc<Receiver<String>>,
 }
 
 impl ProcessView {
     pub(crate) fn flush_statuses(&self) -> Option<String> {
         self.status_receiver.try_iter().last()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        if let Some(status) = self.flush_statuses() {
+            self.latest_status = status;
+        }
+
+        let mut job = LayoutJob::single_section(self.latest_status.clone(), TextFormat { ..Default::default() });
+
+        job.wrap = TextWrapping {
+            max_rows: 1,
+            overflow_character: Some('…'),
+            break_anywhere: true,
+            ..Default::default()
+        };
+
+        ui.label(job);
+
+        #[allow(clippy::cast_precision_loss)]
+        let progress = f32::clamp((self.completed.get() as f32) / (self.steps as f32), 0.0, 1.0);
+        ui.add(ProgressBar::new(progress).animate(true).show_percentage());
     }
 
     pub fn show(&mut self, id: impl Into<WidgetText>, ctx: &egui::Context) {
@@ -31,24 +53,7 @@ impl ProcessView {
             .anchor(Align2::CENTER_CENTER, (0.0, 0.0))
             .min_size([640.0, 360.0])
             .show(ctx, |ui| {
-                if let Some(status) = self.flush_statuses() {
-                    self.latest_status = status
-                }
-
-                let mut job =
-                    LayoutJob::single_section(self.latest_status.clone(), TextFormat { ..Default::default() });
-
-                job.wrap = TextWrapping {
-                    max_rows: 1,
-                    overflow_character: Some('…'),
-                    break_anywhere: true,
-                    ..Default::default()
-                };
-
-                ui.label(job);
-
-                let progress = f32::clamp((self.completed.get() as f32) / (self.steps as f32), 0.0, 1.0);
-                ui.add(ProgressBar::new(progress).animate(true).show_percentage());
+                self.ui(ui);
             });
     }
 }
@@ -74,7 +79,7 @@ impl ProcessState {
             steps: steps.into(),
             latest_status: String::new(),
             completed: op.completed.clone(),
-            status_receiver: Arc::new(receiver),
+            status_receiver: Rc::new(receiver),
         };
 
         (op, view)

@@ -8,101 +8,87 @@ use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
 use crate::styles;
 
-pub(crate) struct TfDirPicker<'a> {
-    output: &'a mut Option<Utf8PlatformPathBuf>,
+#[derive(Debug)]
+pub(crate) struct TfDirPicker {
     picked_dir: String,
     last_error: Option<TfValidationError>,
+    new_dir_picked: bool,
 }
 
-impl<'a> TfDirPicker<'a> {
-    pub(crate) fn new(
-        cc: &eframe::CreationContext<'_>,
-        output: &'a mut Option<Utf8PlatformPathBuf>,
-        picked_dir: String,
-    ) -> Self {
-        styles::configure_fonts(&cc.egui_ctx);
-        styles::configure_text_styles(&cc.egui_ctx);
-
-        let mut last_error = None;
-
-        if !picked_dir.is_empty() {
-            let path = Utf8PlatformPath::new(&picked_dir);
-            match validate(path) {
-                Ok(()) => *output = Some(path.to_owned()),
-                Err(err) => last_error = Some(err),
-            }
-        }
-
+impl TfDirPicker {
+    pub(crate) fn new(picked_dir: String) -> Self {
         Self {
-            output,
+            new_dir_picked: !picked_dir.is_empty(),
             picked_dir,
-            last_error,
+            last_error: None,
         }
     }
-}
 
-impl eframe::App for TfDirPicker<'_> {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::Window::new("tf dir picker")
-                .title_bar(false)
-                .collapsible(false)
-                .resizable(false)
-                .anchor(Align2::CENTER_CENTER, (0.0, 0.0))
-                .max_width(600.0)
-                .scroll(Vec2b::FALSE)
-                .show(ui.ctx(), |ui| {
-                    ui.vertical(|ui| {
-                        ui.label(
-                            egui::RichText::new("Dazzle handles installing mods into your Team Fortress 2 installation. Please select a valid path to your game's \"tf\" directory.")
-                                .text_style(styles::big())
-                        );
+    pub(crate) fn update(&mut self, ctx: &egui::Context, tf_dir: &mut Option<Utf8PlatformPathBuf>) -> bool {
+        let mut done = false;
+        egui::Window::new("tf dir picker")
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, (0.0, 0.0))
+            .max_width(600.0)
+            .scroll(Vec2b::FALSE)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Dazzle handles installing mods into your Team Fortress 2 installation. Please select a valid path to your game's \"tf\" directory.")
+                            .text_style(styles::big())
+                    );
 
-                        let mut new_dir_picked = false;
-                        ui.group(|ui| ui.horizontal(|ui| {
-                            new_dir_picked = TextEdit::singleline(&mut self.picked_dir).desired_width(f32::INFINITY)
-                                .font(TextStyle::Monospace)
-                                .show(ui)
-                                .response.changed();
+                    ui.group(|ui| ui.horizontal(|ui| {
+                        let changed = TextEdit::singleline(&mut self.picked_dir).desired_width(f32::INFINITY)
+                            .font(TextStyle::Monospace)
+                            .show(ui)
+                            .response.changed();
 
-                            if ui.button("Browse").clicked() && let Some(selected_path) = rfd::FileDialog::new().pick_folder() {
-                                self.picked_dir = selected_path.into_os_string().to_string_lossy().into_owned();
-                                new_dir_picked = true;
-                            }
-                        }));
-
-                        if new_dir_picked {
-                            let path = Utf8PlatformPath::new(&self.picked_dir);
-                            match validate(path) {
-                                Ok(()) => {
-                                    *self.output = Some(path.to_owned());
-                                    self.last_error = None;
-                                },
-                                Err(err) => {
-                                    *self.output = None;
-                                    self.last_error = Some(err);
-                                },
-                            }
+                        if changed {
+                            self.new_dir_picked = true;
                         }
 
-                        if let Some(err) = &self.last_error {
-                            ui.group(|ui| {
-                                ui.take_available_width();
-                                ui.horizontal(|ui| {
-                                    ui.image(egui::include_image!("static/images/warning.png"));
-                                    ui.strong(format!("the selected path is not valid: {err}"));
-                                })
-                            });
+                        if ui.button("Browse").clicked() && let Some(selected_path) = rfd::FileDialog::new().pick_folder() {
+                            self.picked_dir = selected_path.into_os_string().to_string_lossy().into_owned();
+                            self.new_dir_picked = true;
                         }
+                    }));
 
-                        ui.vertical_centered(|ui| ui.add_enabled_ui(self.output.is_some(), |ui| {
-                            if ui.button("Lets go!").clicked() {
-                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
-                        }));
-                    });
+                    if self.new_dir_picked {
+                        let path = Utf8PlatformPath::new(&self.picked_dir);
+                        match validate(path) {
+                            Ok(()) => {
+                                *tf_dir = Some(path.to_owned());
+                                self.last_error = None;
+                            },
+                            Err(err) => {
+                                *tf_dir = None;
+                                self.last_error = Some(err);
+                            },
+                        }
+                    }
+
+                    if let Some(err) = &self.last_error {
+                        ui.group(|ui| {
+                            ui.take_available_width();
+                            ui.horizontal(|ui| {
+                                ui.image(egui::include_image!("../static/images/warning.png"));
+                                ui.strong(format!("the selected path is not valid: {err}"));
+                            })
+                        });
+                    }
+
+                    ui.vertical_centered(|ui| ui.add_enabled_ui(tf_dir.is_some(), |ui| {
+                        if ui.button("Lets go!").clicked() {
+                            done = true;
+                        }
+                    }));
                 });
-        });
+            });
+
+        done
     }
 }
 

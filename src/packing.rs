@@ -2,12 +2,14 @@ use std::{collections::HashSet, vec};
 
 use thiserror::Error;
 
+#[derive(Debug)]
 pub struct PcfBin {
     pub capacity: u64,
     pub name: String,
     pub pcf: pcf::new::Pcf,
 }
 
+#[derive(Debug)]
 pub struct PcfBinMap {
     bins: Vec<PcfBin>,
     system_names: HashSet<String>,

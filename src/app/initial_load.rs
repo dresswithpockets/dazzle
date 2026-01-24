@@ -2,46 +2,45 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io,
-    num::NonZero,
-    sync::{
-        Arc,
-        mpsc::{self},
-    },
+    sync::Arc,
     thread::{self, JoinHandle},
 };
 
-use atomic_counter::AtomicCounter;
-use eframe::egui::{ self, CentralPanel};
+use super::process::ProcessState;
+use eframe::egui;
 use pcf::Pcf;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use thiserror::Error;
-use typed_path::Utf8PlatformPathBuf;
 
 use crate::{
-    addon::Sources,
-    app::App,
+    addon::{self, Addon, ExtractionError, Sources},
+    app::{Paths, process::ProcessView},
     packing::{PcfBin, PcfBinMap},
     pcf_defaults,
-    process::{ProcessState, ProcessView},
-    styles,
 };
 
-struct LoadingVanillaPcfs {
-    handle: JoinHandle<Result<Vec<VanillaPcfGroup>, VanillaPcfError>>,
-}
-
-struct ParsingAddons {}
-
-enum State {
-    LoadingVanillaPcfs(LoadingVanillaPcfs),
-    ErrorLoadingVanillaPcfs(VanillaPcfError),
-    ParsingAddons(),
-}
-
-struct Setup {
-    app_dirs: App,
+struct InitialLoader {
+    paths: Paths,
     operator_defaults: Arc<HashMap<&'static str, pcf::Attribute>>,
     particle_system_defaults: Arc<HashMap<&'static str, pcf::Attribute>>,
+}
+
+pub(crate) struct LoadedData {
+    pub bins: PcfBinMap,
+    pub vanilla_graphs: Vec<(String, Vec<Pcf>)>,
+    pub addons: Vec<Addon>,
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum LoadError {
+    #[error(transparent)]
+    Sources(#[from] addon::Error),
+
+    #[error(transparent)]
+    Extraction(#[from] ExtractionError),
+
+    #[error(transparent)]
+    Parse(#[from] addon::ParseError),
 }
 
 // A LoadOperation is an operation which processes some state and has a UI presentation to reflect the current state
@@ -50,24 +49,32 @@ struct Setup {
 // - handling new addons when theyre imported
 // - installing addons to tf2
 
-impl Setup {
-    fn new(
-        app_dirs: App,
-        operator_defaults: HashMap<&'static str, pcf::Attribute>,
-        particle_system_defaults: HashMap<&'static str, pcf::Attribute>,
-    ) -> Self {
+pub(crate) fn start_initial_load(
+    ctx: &egui::Context,
+    paths: Paths,
+) -> (ProcessView, JoinHandle<Result<LoadedData, LoadError>>) {
+    let loader = InitialLoader::new(paths);
+    let (load_state, load_view) = ProcessState::new(ctx, InitialLoader::operation_steps().try_into().unwrap());
+
+    let handle = thread::spawn(move || -> Result<LoadedData, LoadError> { loader.run(&load_state) });
+
+    (load_view, handle)
+}
+
+impl InitialLoader {
+    fn new(paths: Paths) -> Self {
         Self {
-            app_dirs,
-            operator_defaults: Arc::new(operator_defaults),
-            particle_system_defaults: Arc::new(particle_system_defaults),
+            paths,
+            operator_defaults: Arc::new(pcf_defaults::get_default_operator_map()),
+            particle_system_defaults: Arc::new(pcf_defaults::get_particle_system_defaults()),
         }
     }
 
-    pub(crate) fn operation_steps() -> usize {
+    fn operation_steps() -> usize {
         (pcf_defaults::PARTICLES_MANIFEST.len() * 2) + 120
     }
 
-    pub(crate) fn run(&self, load_operation: &ProcessState) {
+    fn run(&self, load_operation: &ProcessState) -> Result<LoadedData, LoadError> {
         load_operation.push_status("Loading vanilla particle systems");
         let groups = Self::get_vanilla_pcf_groups_from_manifest(load_operation).unwrap();
         let vanilla_pcfs: Vec<_> = {
@@ -105,42 +112,40 @@ impl Setup {
         load_operation.add_progress(30);
 
         load_operation.push_status("Loading addons...");
-        let sources = match Sources::read_dir(&self.app_dirs.addons_dir) {
-            Ok(sources) => sources,
-            Err(_) => todo!(),
-        };
+        let sources = Sources::read_dir(&self.paths.addons_dir)?;
         load_operation.add_progress(30);
 
         if !sources.failures.is_empty() {
-            todo!();
+            // TODO: we should present information about addons that failed to load to the user
+            eprintln!("There were some errors reading some or all addon sources:");
+            for (path, error) in sources.failures {
+                eprintln!("  {}: {error}", path.display());
+            }
         }
 
-        let extracted_addons: Vec<_> = sources
+        let extracted_addons: Result<Vec<_>, _> = sources
             .sources
             .into_par_iter()
             .map(|source| {
                 load_operation.push_status(format!("Extracting addon {}", source.name().unwrap_or_default()));
-                match source.extract_as_subfolder_in(&self.app_dirs.extracted_content_dir) {
-                    Ok(extracted) => extracted,
-                    Err(_) => todo!(),
-                }
+                source.extract_as_subfolder_in(&self.paths.extracted_content_dir)
             })
             .collect();
         load_operation.add_progress(30);
 
         let mut addons = Vec::new();
-        for addon in extracted_addons {
+        for addon in extracted_addons? {
             load_operation.push_status(format!("Parsing contents of {}", addon.name().unwrap_or_default()));
-            let content = match addon.parse_content() {
-                Ok(content) => content,
-                Err(_) => todo!(),
-            };
-
-            addons.push(content);
+            addons.push(addon.parse_content()?);
         }
         load_operation.add_progress(30);
-
         load_operation.push_status("Done!");
+
+        Ok(LoadedData {
+            bins,
+            vanilla_graphs,
+            addons,
+        })
     }
 
     fn get_vanilla_pcf_groups_from_manifest(
@@ -198,7 +203,7 @@ impl Setup {
                         name: name.to_string(),
                         pcf,
                         size: *size,
-                    })
+                    });
                 }
 
                 if let Some((name, file_path, size)) = dx90_slow_names.get(&group.default.name) {
@@ -210,7 +215,7 @@ impl Setup {
                         name: name.to_string(),
                         pcf,
                         size: *size,
-                    })
+                    });
                 }
 
                 Ok(group)
@@ -219,47 +224,37 @@ impl Setup {
     }
 }
 
-pub(crate) struct SimpleInstaller {
-    tf_dir: Utf8PlatformPathBuf,
+// #[derive(Debug)]
+// pub(crate) struct InitialLoader {
+//     tf_dir: Utf8PlatformPathBuf,
 
-    setup_handle: JoinHandle<()>,
-    load_view: ProcessView,
-}
+//     setup_handle: JoinHandle<()>,
+//     process_view: ProcessView,
+// }
 
-impl SimpleInstaller {
-    pub(crate) fn new(ctx: &egui::Context, app_dirs: App, tf_dir: Utf8PlatformPathBuf) -> Self {
-        styles::configure_fonts(ctx);
-        styles::configure_text_styles(ctx);
+// impl InitialLoader {
+//     pub(crate) fn new(ctx: &egui::Context, paths: &Paths, tf_dir: Utf8PlatformPathBuf) -> Self {
+//         let operator_defaults = pcf_defaults::get_default_operator_map();
+//         let particle_system_defaults = pcf_defaults::get_particle_system_defaults();
 
-        let operator_defaults = pcf_defaults::get_default_operator_map();
-        let particle_system_defaults = pcf_defaults::get_particle_system_defaults();
+//         let setup = Setup::new(paths, operator_defaults, particle_system_defaults);
+//         let (load_operation, load_view) = ProcessState::new(ctx, Setup::operation_steps().try_into().unwrap());
 
-        let setup = Setup::new(app_dirs, operator_defaults, particle_system_defaults);
-        let (load_operation, load_view) = ProcessState::new(ctx, Setup::operation_steps().try_into().unwrap());
+//         let worker_handle = thread::spawn(move || {
+//             setup.run(&load_operation);
+//         });
 
-        let worker_handle = thread::spawn(move || {
-            setup.run(&load_operation);
-        });
+//         Self {
+//             tf_dir,
+//             setup_handle: worker_handle,
+//             process_view: load_view,
+//         }
+//     }
 
-        Self {
-            tf_dir,
-            setup_handle: worker_handle,
-            load_view,
-        }
-    }
-
-    pub(crate) fn ui(&mut self, ui: &egui::Ui) {
-        self.load_view.show("simpler installer load view", ui.ctx());
-    }
-}
-
-impl eframe::App for SimpleInstaller {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        CentralPanel::default().show(ctx, |ui| {
-            self.ui(ui);
-        });
-    }
-}
+//     pub(crate) fn ui(&mut self, ui: &egui::Ui) {
+//         self.process_view.show("simpler installer load view", ui.ctx());
+//     }
+// }
 
 struct VanillaPcfGroup {
     default: VanillaPcf,

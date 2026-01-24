@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use thiserror::Error;
-use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
+use typed_path::{CheckedPathError, Utf8PlatformPath, Utf8PlatformPathBuf};
 use vpk::VPK;
 
 use crate::paths::{self, std_to_typed};
@@ -40,6 +40,12 @@ pub struct Addon {
     pub particle_files: HashMap<Utf8PlatformPathBuf, pcf::new::Pcf>,
 }
 
+impl Addon {
+    pub(crate) fn name(&self) -> &str {
+        self.source_path.file_name().unwrap()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Material {
     /// the path to this material, relative to `{path_to_game}/materials/`
@@ -65,6 +71,27 @@ pub struct Material {
 pub struct Extracted {
     source_path: Utf8PlatformPathBuf,
     content_path: Utf8PlatformPathBuf,
+}
+
+#[derive(Debug, Error)]
+pub enum ParseError {
+    #[error(transparent)]
+    Dmx(#[from] dmx::dmx::Error),
+
+    #[error(transparent)]
+    Pcf(#[from] pcf::new::Error),
+
+    #[error(transparent)]
+    Glob(#[from] glob::GlobError),
+
+    #[error(transparent)]
+    GlobPattern(#[from] glob::PatternError),
+
+    #[error(transparent)]
+    CheckedPath(#[from] CheckedPathError),
+
+    #[error(transparent)]
+    Io(#[from] io::Error),
 }
 
 impl Extracted {
@@ -137,7 +164,7 @@ impl Extracted {
     /// - iterating over extracted files fails
     /// - some [`std::io::Error`] when opening or reading files
     /// - the addon contains invalid or inoperable parts, such as a corrupted PCF.
-    pub fn parse_content(self) -> anyhow::Result<Addon> {
+    pub fn parse_content(self) -> Result<Addon, ParseError> {
         let mut particle_files = HashMap::new();
         let particles_path = self.content_path.join_checked("particles")?;
         for path in glob(&format!("{particles_path}/*.pcf"))? {
@@ -229,6 +256,33 @@ pub enum Error {
     Utf8(#[from] std::str::Utf8Error),
 }
 
+#[derive(Debug, Error)]
+pub enum ExtractionError {
+    #[error("couldn't get last component from addon path: {0}")]
+    CouldntGetAddonFileName(Utf8PlatformPathBuf),
+
+    #[error("the addon extraction parent '{0}' doesn't exist")]
+    MissingAddonParentPath(Utf8PlatformPathBuf),
+
+    #[error("the addon extraction destination '{0}' already exists")]
+    ExtractionDestinationAlreadyExists(Utf8PlatformPathBuf),
+
+    #[error("there were errors extracting some or all files from the addon")]
+    CopyFailed(Vec<io::Error>),
+
+    #[error("expected to copy {0} bytes, instead copied {1}, when copying from {2} to {3}")]
+    UnexpectedCopyResult(u64, u64, String, String),
+
+    #[error(transparent)]
+    Vpk(#[from] vpk::Error),
+
+    #[error(transparent)]
+    CheckedPath(#[from] CheckedPathError),
+
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
 impl Source {
     /// Evaluates the `source` path to determine the [`Source`] type.
     ///
@@ -278,25 +332,24 @@ impl Source {
     /// - `parent` doesn't exist
     /// - the destination subfolder already exists
     /// - there was an error extracting the source's contents, e.g. not enough permissions to write to the folder
-    pub fn extract_as_subfolder_in(&self, parent: &Utf8PlatformPath) -> anyhow::Result<Extracted> {
+    pub fn extract_as_subfolder_in(&self, parent: &Utf8PlatformPath) -> Result<Extracted, ExtractionError> {
         let source_path = match self {
             Source::Folder(source_path) | Source::Vpk(source_path) => source_path,
         };
 
         let last_part = source_path
             .file_name()
-            .ok_or(anyhow!("couldn't get last component from addon path: {source_path}"))?;
+            .ok_or_else(|| ExtractionError::CouldntGetAddonFileName(source_path.to_owned()))?;
+
         let destination = parent.join_checked(last_part)?;
 
         if !fs::exists(parent)? {
-            return Err(anyhow!(
-                "the addon extraction parent '{parent}' doesn't exist. this should never happen."
-            ));
+            return Err(ExtractionError::MissingAddonParentPath(parent.to_owned()));
         }
 
         if fs::exists(&destination)? {
-            return Err(anyhow!(
-                "the addon extraction destination '{destination}' already exists. this should never happen."
+            return Err(ExtractionError::ExtractionDestinationAlreadyExists(
+                destination.to_owned(),
             ));
         }
 
@@ -304,7 +357,7 @@ impl Source {
             Source::Folder(source_path) => {
                 let errors = copy_dir(source_path, &destination)?;
                 if !errors.is_empty() {
-                    return Err(anyhow!(""));
+                    return Err(ExtractionError::CopyFailed(errors));
                 }
             }
             Source::Vpk(source_path) => Self::extract_vpk(source_path, &destination)?,
@@ -317,7 +370,7 @@ impl Source {
     }
 
     /// Extracts the entire file tree from a vpk at `source_vpk` to a target directory `to_dir`.
-    fn extract_vpk(source_vpk: impl AsRef<Path>, to_dir: impl AsRef<Path>) -> anyhow::Result<()> {
+    fn extract_vpk(source_vpk: impl AsRef<Path>, to_dir: impl AsRef<Path>) -> Result<(), ExtractionError> {
         let vpk = VPK::read(&source_vpk)?;
 
         // TODO: make vpk extraction asynchronous/threaded
@@ -336,10 +389,11 @@ impl Source {
             let entry_size = u64::from(entry.dir_entry.file_length) + u64::from(entry.dir_entry.preload_length);
             let copied = io::copy(&mut file_in_vpk, &mut extracted_file)?;
             if copied != entry_size {
-                return Err(anyhow!(
-                    "expected to copy {entry_size}, instead copied {copied}, when copying {}/{entry_path} to {}",
-                    source_vpk.as_ref().display(),
-                    file_path.display()
+                return Err(ExtractionError::UnexpectedCopyResult(
+                    entry_size,
+                    copied,
+                    format!("{}/{entry_path}", source_vpk.as_ref().display()),
+                    file_path.to_string_lossy().into_owned(),
                 ));
             }
         }

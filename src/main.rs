@@ -29,16 +29,13 @@
 #![feature(push_mut)]
 #![feature(lock_value_accessors)]
 
-pub mod addon;
-pub mod app;
+mod addon;
+mod app;
 mod packing;
-pub mod patch;
+mod patch;
 mod paths;
 mod pcf_defaults;
-mod process;
 mod styles;
-mod view_installer;
-mod view_tf_dir;
 mod vpk_writer;
 
 use core::f32;
@@ -61,7 +58,6 @@ use rayon::prelude::*;
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
-use crate::app::AppBuilder;
 use crate::{
     addon::Sources,
     app::{App, BuildError},
@@ -202,7 +198,7 @@ fn main() -> anyhow::Result<()> {
            Show installer viewport
     */
 
-    let app_dirs = match AppBuilder::new().build() {
+    let app = match App::new() {
         Ok(app) => app,
         Err(err) => {
             present_fatal_error_dialogue(err);
@@ -220,37 +216,48 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let mut tf_dir = None;
-    let _ = eframe::run_native(
-        APP_ID,
-        native_options.clone(),
-        Box::new(|cc| {
-            egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(view_tf_dir::TfDirPicker::new(
-                cc,
-                &mut tf_dir,
-                get_default_platform_tf_dir(),
-            )))
-        }),
-    );
-
-    let Some(tf_dir) = tf_dir else {
-        eprintln!("the tf directory picker viewport was closed without choosing valid tf directory.");
-        return Ok(());
-    };
-
     let _ = eframe::run_native(
         APP_ID,
         native_options,
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(view_installer::SimpleInstaller::new(
-                &cc.egui_ctx,
-                app_dirs,
-                tf_dir,
-            )))
+            styles::configure_fonts(&cc.egui_ctx);
+            styles::configure_text_styles(&cc.egui_ctx);
+            Ok(Box::new(app))
         }),
     );
+
+    // let mut tf_dir = None;
+    // let _ = eframe::run_native(
+    //     APP_ID,
+    //     native_options.clone(),
+    //     Box::new(|cc| {
+    //         egui_extras::install_image_loaders(&cc.egui_ctx);
+    //         Ok(Box::new(view_tf_dir::TfDirPicker::new(
+    //             cc,
+    //             &mut tf_dir,
+    //             get_default_platform_tf_dir(),
+    //         )))
+    //     }),
+    // );
+
+    // let Some(tf_dir) = tf_dir else {
+    //     eprintln!("the tf directory picker viewport was closed without choosing valid tf directory.");
+    //     return Ok(());
+    // };
+
+    // let _ = eframe::run_native(
+    //     APP_ID,
+    //     native_options,
+    //     Box::new(|cc| {
+    //         egui_extras::install_image_loaders(&cc.egui_ctx);
+    //         Ok(Box::new(view_installer::SimpleInstaller::new(
+    //             &cc.egui_ctx,
+    //             app_dirs,
+    //             tf_dir,
+    //         )))
+    //     }),
+    // );
 
     return Ok(());
 
@@ -338,46 +345,6 @@ fn main() -> anyhow::Result<()> {
     // TODO: process and patch particles into main VPK, handling duplicate effects
 
     Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn get_default_platform_tf_dir() -> String {
-    match env::var("PROGRAMFILES(X86)") {
-        Ok(programfiles) => {
-            let mut path = Utf8PlatformPathBuf::from(programfiles);
-            path.extend(["Steam", "steamapps", "common", "Team Fortress 2", "tf"]);
-
-            match path.absolutize() {
-                Ok(path) => path.into_string(),
-                Err(_) => String::default(),
-            }
-        }
-        Err(_) => String::default(),
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn get_default_platform_tf_dir() -> String {
-    match env::var("HOME") {
-        Ok(home) => {
-            let mut path = Utf8PlatformPathBuf::from(home);
-            path.extend([
-                ".local",
-                "share",
-                "Steam",
-                "steamapps",
-                "common",
-                "Team Fortress 2",
-                "tf",
-            ]);
-
-            match path.absolutize() {
-                Ok(path) => path.into_string(),
-                Err(_) => String::default(),
-            }
-        }
-        Err(_) => String::default(),
-    }
 }
 
 fn copy_addon_structure(in_dir: &Utf8PlatformPath, out_dir: &Utf8PlatformPath) -> anyhow::Result<()> {
