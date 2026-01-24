@@ -11,10 +11,6 @@ license = "Apache-2.0"
 default = []
 split_item_fx_pcf = []
 
-[profile.profiling]
-inherits = "release"
-debug = true
-
 [dependencies]
 addon.workspace = true
 anyhow.workspace = true

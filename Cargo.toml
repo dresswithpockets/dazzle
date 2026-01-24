@@ -1,7 +1,6 @@
 [workspace]
-default-members = [ ".", ]
+default-members = [ "dazzle" ]
 members = [
-    ".",
     "addon",
     "dazzle",
     "dmx",
@@ -41,3 +40,7 @@ writevpk = { path = "writevpk" }
 empty_loop = "forbid"
 infinite_loop = "deny"
 mem_forget = "deny"
+
+[profile.profiling]
+inherits = "release"
+debug = true
