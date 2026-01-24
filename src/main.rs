@@ -55,10 +55,9 @@ use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
 use crate::app::{App, BuildError};
-use crate::{
-    packing::{PcfBin, PcfBinMap},
-    patch::PatchVpkExt,
-};
+use crate::packing::PcfBin;
+
+use writevpk::patch::PatchVpkExt;
 
 const SPLIT_BY_2GB: u32 = 2 << 30;
 

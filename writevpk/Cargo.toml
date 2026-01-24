@@ -5,6 +5,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow.workspace = true
 buf_read_write.workspace = true
 byteorder.workspace = true
 crc32fast = "1.5"
