@@ -29,11 +29,9 @@
 #![feature(push_mut)]
 #![feature(lock_value_accessors)]
 
-mod addon;
 mod app;
 mod packing;
 mod patch;
-mod paths;
 mod pcf_defaults;
 mod styles;
 mod vpk_writer;
@@ -48,6 +46,7 @@ use std::{
     sync::Arc,
 };
 
+use addon::Sources;
 use bytes::{Buf, BufMut, BytesMut};
 use directories::ProjectDirs;
 use dmx::Dmx;
@@ -58,10 +57,7 @@ use rayon::prelude::*;
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
-use crate::{
-    addon::Sources,
-    app::{App, BuildError},
-};
+use crate::app::{App, BuildError};
 use crate::{
     packing::{PcfBin, PcfBinMap},
     patch::PatchVpkExt,

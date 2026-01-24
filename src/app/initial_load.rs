@@ -13,11 +13,11 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use thiserror::Error;
 
 use crate::{
-    addon::{self, Addon, ExtractionError, Sources},
     app::{Paths, process::ProcessView},
     packing::{PcfBin, PcfBinMap},
     pcf_defaults,
 };
+use addon::{self, Addon, ExtractionError, Sources};
 
 struct InitialLoader {
     paths: Paths,

@@ -11,8 +11,6 @@ use md5::{Digest, Md5};
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
-use crate::paths;
-
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]

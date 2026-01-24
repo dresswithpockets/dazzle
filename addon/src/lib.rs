@@ -1,8 +1,10 @@
+#![feature(file_buffered)]
+#![feature(trim_prefix_suffix)]
+
 use anyhow::anyhow;
 use copy_dir::copy_dir;
 use glob::glob;
 use std::{
-    borrow::Cow,
     collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{self, Read},
@@ -12,7 +14,7 @@ use thiserror::Error;
 use typed_path::{CheckedPathError, Utf8PlatformPath, Utf8PlatformPathBuf};
 use vpk::VPK;
 
-use crate::paths::{self, std_to_typed};
+use paths::{self, std_to_typed};
 
 #[derive(Debug)]
 pub struct Info {
@@ -41,7 +43,7 @@ pub struct Addon {
 }
 
 impl Addon {
-    pub(crate) fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         self.source_path.file_name().unwrap()
     }
 }
@@ -95,7 +97,7 @@ pub enum ParseError {
 }
 
 impl Extracted {
-    pub(crate) fn name(&self) -> Option<&str> {
+    pub fn name(&self) -> Option<&str> {
         self.source_path.file_name()
     }
 

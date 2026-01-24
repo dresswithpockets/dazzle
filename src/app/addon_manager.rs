@@ -1,7 +1,7 @@
 use eframe::egui::{self, Align2, Layout, Vec2b, Window};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 
-use crate::addon::Addon;
+use addon::Addon;
 
 #[derive(Debug)]
 pub(crate) struct Manager {

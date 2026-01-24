@@ -9,7 +9,9 @@ license = "Apache-2.0"
 default-members = [ ".", ]
 members = [
     ".",
+    "addon",
     "dmx",
+    "paths",
     "pcf",
     "nanoserde",
     "tools/pcftree",
@@ -24,28 +26,43 @@ split_item_fx_pcf = []
 inherits = "release"
 debug = true
 
+[workspace.dependencies]
+anyhow = "1.0"
+copy_dir = "0.1"
+glob = "0.3"
+thiserror = "2.0"
+typed-path = "0.11"
+vpk = "0.3"
+
+addon = { path = "addon"}
+dmx = { path = "dmx" }
+paths = { path = "paths" }
+pcf = { path = "pcf" }
+
 [dependencies]
+addon = { workspace = true }
+anyhow = { workspace = true }
+dmx = { workspace = true }
+copy_dir = { workspace = true }
+glob = { workspace = true }
+paths = { workspace = true }
+pcf = { workspace = true }
+thiserror = { workspace = true }
+typed-path = { workspace = true }
+vpk = { workspace = true }
+
 eframe = "0.33"
 egui_extras = { version = "0.33", features = [ "all_loaders" ] }
 image = { version = "0.25", features = [ "png" ]}
-anyhow = "1.0"
 byteorder = "1.5"
 bytes = "1.11"
 buf_read_write = "0.5"
-dmx = { path = "dmx" }
-pcf = { version = "0.1.0", path = "pcf" }
-copy_dir = "0.1"
-vpk = "0.3"
 directories = { version = "6.0" }
 derive_more = { version = "2.1", features = [ "from", "into" ] }
-thiserror = "2.0"
-glob = "0.3"
 relative-path = "2.0"
 single-instance = "0.3"
-typed-path = "0.11"
 nanoserde = { path = "nanoserde", default-features = false, features = ["std", "json"] }
 ordermap = "1.0"
-keyvalues-parser = "0.2"
 hashbrown = "0.16"
 crc32fast = "1.5"
 md-5 = "0.10"

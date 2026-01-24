@@ -109,6 +109,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "addon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copy_dir",
+ "dmx",
+ "glob",
+ "keyvalues-parser",
+ "paths",
+ "pcf",
+ "thiserror 2.0.17",
+ "typed-path",
+ "vpk",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1007,6 +1023,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 name = "dazzle"
 version = "0.1.0"
 dependencies = [
+ "addon",
  "anyhow",
  "atomic-counter",
  "buf_read_write",
@@ -1023,10 +1040,10 @@ dependencies = [
  "glob",
  "hashbrown 0.16.1",
  "image",
- "keyvalues-parser",
  "md-5",
  "nanoserde",
  "ordermap",
+ "paths",
  "pcf",
  "permissions",
  "rayon",
@@ -3130,6 +3147,13 @@ name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
+
+[[package]]
+name = "paths"
+version = "0.1.0"
+dependencies = [
+ "typed-path",
+]
 
 [[package]]
 name = "pcf"

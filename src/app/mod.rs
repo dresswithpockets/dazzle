@@ -15,7 +15,6 @@ use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
 use crate::{
-    addon::Addon,
     app::{
         addon_manager::Manager,
         initial_load::{LoadError, LoadedData},
@@ -23,9 +22,10 @@ use crate::{
     },
     packing::PcfBinMap,
 };
+use addon::Addon;
 use tf_dir_picker::TfDirPicker;
 
-use super::{APP_INSTANCE_NAME, APP_NAME, APP_ORG, APP_TLD, PARTICLE_SYSTEM_MAP, paths};
+use super::{APP_INSTANCE_NAME, APP_NAME, APP_ORG, APP_TLD, PARTICLE_SYSTEM_MAP};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Paths {
