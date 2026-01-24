@@ -38,7 +38,7 @@ mod vpk_writer;
 
 use core::f32;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     env::{self, consts::OS},
     fs::{self, File},
     io::{self, ErrorKind},
@@ -51,7 +51,6 @@ use bytes::{Buf, BufMut, BytesMut};
 use directories::ProjectDirs;
 use dmx::Dmx;
 use eframe::egui::{self, Align2, CentralPanel, FontFamily, RichText, TextEdit, TextStyle, Vec2b, Window};
-use hashbrown::HashMap;
 use pcf::Pcf;
 use rayon::prelude::*;
 use thiserror::Error;

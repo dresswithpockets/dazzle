@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-dmx = { path = "../../dmx" }
-pcf = { path = "../../pcf" }
+dmx.workspace = true
+pcf.workspace = true
 hex_fmt = "0.3"
 ptree = "0.5"

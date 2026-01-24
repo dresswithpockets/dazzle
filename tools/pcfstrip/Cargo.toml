@@ -4,14 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0"
-byteorder = "1.5"
-bytes = "1.11"
+anyhow.workspace = true
+byteorder.workspace = true
+bytes.workspace = true
 buf_read_write = "0.5"
-dmx = { path = "../../dmx" }
-glob = "0.3"
+dmx.workspace = true
+glob.workspace = true
 hex_fmt = "0.3"
-pcf = { path = "../../pcf" }
+pcf.workspace = true
 relative-path = "2.0"
-thiserror = "2.0"
-vpk = "0.3"
+thiserror.workspace = true
+vpk.workspace = true

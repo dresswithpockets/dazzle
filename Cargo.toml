@@ -69,7 +69,6 @@ directories = { version = "6.0" }
 derive_more = { version = "2.1", features = [ "from", "into", "display" ] }
 relative-path = "2.0"
 single-instance = "0.3"
-hashbrown = "0.16"
 crc32fast = "1.5"
 md-5 = "0.10"
 rayon = "1.11"
