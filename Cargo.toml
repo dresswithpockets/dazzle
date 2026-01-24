@@ -13,6 +13,7 @@ members = [
     "dmx",
     "paths",
     "pcf",
+    "pcfpack",
     "nanoserde",
     "writevpk",
     "tools/pcftree",
@@ -47,6 +48,7 @@ dmx = { path = "dmx" }
 nanoserde = { path = "nanoserde", default-features = false, features = ["std", "json"] }
 paths = { path = "paths" }
 pcf = { path = "pcf" }
+pcfpack = { path = "pcfpack" }
 writevpk = { path = "writevpk" }
 
 [dependencies]
@@ -63,6 +65,7 @@ nanoserde.workspace = true
 ordermap.workspace = true
 paths.workspace = true
 pcf.workspace = true
+pcfpack.workspace = true
 thiserror.workspace = true
 typed-path.workspace = true
 vpk.workspace = true

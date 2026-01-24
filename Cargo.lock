@@ -1043,6 +1043,7 @@ dependencies = [
  "ordermap",
  "paths",
  "pcf",
+ "pcfpack",
  "permissions",
  "rayon",
  "relative-path",
@@ -3168,6 +3169,14 @@ dependencies = [
  "petgraph 0.8.3",
  "thiserror 2.0.17",
  "type-state-builder",
+]
+
+[[package]]
+name = "pcfpack"
+version = "0.1.0"
+dependencies = [
+ "pcf",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

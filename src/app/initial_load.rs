@@ -9,12 +9,12 @@ use std::{
 use super::process::ProcessState;
 use eframe::egui;
 use pcf::Pcf;
+use pcfpack::BinPack;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use thiserror::Error;
 
 use crate::{
     app::{Paths, process::ProcessView},
-    packing::{PcfBin, PcfBinMap},
     pcf_defaults,
 };
 use addon::{self, Addon, ExtractionError, Sources};
@@ -26,7 +26,7 @@ struct InitialLoader {
 }
 
 pub(crate) struct LoadedData {
-    pub bins: PcfBinMap,
+    pub bins: Vec<pcfpack::Bin>,
     pub vanilla_graphs: Vec<(String, Vec<Pcf>)>,
     pub addons: Vec<Addon>,
 }
@@ -101,7 +101,7 @@ impl InitialLoader {
         };
 
         load_operation.push_status("Separating particle tree into connected graphs...");
-        let bins = PcfBinMap::new(vanilla_pcfs.iter().map(default_bin_from).collect());
+        let bins: Vec<_> = vanilla_pcfs.iter().map(default_bin_from).collect();
         let vanilla_graphs: Vec<_> = vanilla_pcfs
             .into_iter()
             .map(|group| {
@@ -277,10 +277,6 @@ enum VanillaPcfError {
     Decode(#[from] pcf::DecodeError),
 }
 
-fn default_bin_from(group: &VanillaPcfGroup) -> PcfBin {
-    PcfBin {
-        capacity: group.default.size,
-        name: group.default.name.clone(),
-        pcf: Pcf::new_empty_from(&group.default.pcf),
-    }
+fn default_bin_from(group: &VanillaPcfGroup) -> pcfpack::Bin {
+    pcfpack::Bin::new(group.default.size, group.default.name.clone(), Pcf::new_empty_from(&group.default.pcf))
 }

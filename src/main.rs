@@ -30,7 +30,6 @@
 #![feature(lock_value_accessors)]
 
 mod app;
-mod packing;
 mod pcf_defaults;
 mod styles;
 
@@ -50,12 +49,12 @@ use directories::ProjectDirs;
 use dmx::Dmx;
 use eframe::egui::{self, Align2, CentralPanel, FontFamily, RichText, TextEdit, TextStyle, Vec2b, Window};
 use pcf::Pcf;
+use pcfpack::Bin;
 use rayon::prelude::*;
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
 use crate::app::{App, BuildError};
-use crate::packing::PcfBin;
 
 use writevpk::patch::PatchVpkExt;
 
@@ -485,14 +484,6 @@ fn get_vanilla_pcf_groups_from_manifest() -> Result<Vec<VanillaPcfGroup>, Vanill
             Ok(group)
         })
         .collect()
-}
-
-fn default_bin_from(group: &VanillaPcfGroup) -> PcfBin {
-    PcfBin {
-        capacity: group.default.size,
-        name: group.default.name.clone(),
-        pcf: Pcf::new_empty_from(&group.default.pcf),
-    }
 }
 
 // fn next() -> anyhow::Result<()> {

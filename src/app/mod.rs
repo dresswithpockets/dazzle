@@ -20,7 +20,6 @@ use crate::{
         initial_load::{LoadError, LoadedData},
         process::ProcessView,
     },
-    packing::PcfBinMap,
 };
 use addon::Addon;
 use tf_dir_picker::TfDirPicker;
@@ -57,7 +56,7 @@ pub(crate) enum State {
     /// Will always transition to [`State::Installing`].
     ManagingAddons {
         tf_dir: Utf8PlatformPathBuf,
-        bins: PcfBinMap,
+        bins: Vec<pcfpack::Bin>,
         vanilla_graphs: Vec<(String, Vec<Pcf>)>,
         manager: Manager,
     },
