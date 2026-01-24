@@ -107,7 +107,7 @@ fn main() -> anyhow::Result<()> {
     println!("done");
 
     let vpk_path = env::var("HOME").unwrap() + "/.local/share/Steam/steamapps/common/Team Fortress 2/tf/tf2_misc_dir.vpk";
-    let mut vpk = vpk::from_path(VPK_PATH)?;
+    let mut vpk = vpk::from_path(vpk_path)?;
 
     println!("patching PCFs... ");
     for (pcf, output) in input_pcfs {
