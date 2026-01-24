@@ -63,19 +63,19 @@ impl Manager {
                                     egui::UiBuilder::new().layout(Layout::left_to_right(egui::Align::Center).with_cross_justify(true)),
                                     |ui| {
                                         if ui.button("Open Addons Folder").clicked() {
-                                            // TODO:
+                                            todo!();
                                         }
 
                                         if ui.button("Add Addon").clicked() {
-                                            // TODO:
+                                            todo!();
                                         }
 
                                         if ui.button("Install Addons").on_hover_text("installs selected addons into your tf/ directory").clicked() {
-                                            // TODO:
+                                            todo!();
                                         }
 
                                         if ui.button("Uninstall Addons").on_hover_text("removes any Dazzle customizations from your tf/ directory, resetting them back to vanilla").clicked() {
-                                            // TODO:
+                                            todo!();
                                         }
                                     }
                                 );

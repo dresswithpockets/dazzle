@@ -87,7 +87,10 @@ fn create_element_children<'a, 't>(
                 let label = format!(
                     "{} ({}, {:x?})",
                     child.name,
-                    pcf.symbols().base.get_index(pcf.symbols().particle_child.unwrap() as usize).unwrap(),
+                    pcf.symbols()
+                        .base
+                        .get_index(pcf.symbols().particle_child.unwrap() as usize)
+                        .unwrap(),
                     child.signature,
                 );
 
