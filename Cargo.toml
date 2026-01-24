@@ -1,15 +1,9 @@
-[package]
-name = "dazzle"
-description = "process and install TF2 mods"
-version = "0.1.0"
-edition = "2024"
-license = "Apache-2.0"
-
 [workspace]
 default-members = [ ".", ]
 members = [
     ".",
     "addon",
+    "dazzle",
     "dmx",
     "paths",
     "pcf",
@@ -19,14 +13,6 @@ members = [
     "tools/pcftree",
     "tools/pcfstrip",
 ]
-
-[features]
-default = []
-split_item_fx_pcf = []
-
-[profile.profiling]
-inherits = "release"
-debug = true
 
 [workspace.dependencies]
 anyhow = "1.0"
@@ -51,44 +37,7 @@ pcf = { path = "pcf" }
 pcfpack = { path = "pcfpack" }
 writevpk = { path = "writevpk" }
 
-[dependencies]
-addon.workspace = true
-anyhow.workspace = true
-buf_read_write.workspace = true
-byteorder.workspace = true
-bytes.workspace = true
-dmx.workspace = true
-copy_dir.workspace = true
-glob.workspace = true
-md-5.workspace = true
-nanoserde.workspace = true
-ordermap.workspace = true
-paths.workspace = true
-pcf.workspace = true
-pcfpack.workspace = true
-thiserror.workspace = true
-typed-path.workspace = true
-vpk.workspace = true
-writevpk.workspace = true
-
-eframe = "0.33"
-egui_extras = { version = "0.33", features = [ "all_loaders" ] }
-image = { version = "0.25", features = [ "png" ]}
-directories = { version = "6.0" }
-derive_more = { version = "2.1", features = [ "from", "into", "display" ] }
-relative-path = "2.0"
-single-instance = "0.3"
-rayon = "1.11"
-rfd = "0.17"
-permissions = "0.5"
-workerpool = "1.2"
-atomic-counter = "1.0"
-
-[build-dependencies]
-copy_to_output = "2.2.0"
-glob = "0.3"
-
-[lints.clippy]
+[workspace.lints.clippy]
 empty_loop = "forbid"
 infinite_loop = "deny"
 mem_forget = "deny"
