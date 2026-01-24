@@ -1188,7 +1188,6 @@ dependencies = [
  "derive_more",
  "either",
  "itertools 0.14.0",
- "nanoserde",
  "ordered-float 5.1.0",
  "ordermap",
  "thiserror 2.0.17",
