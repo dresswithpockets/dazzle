@@ -1,15 +1,11 @@
 use byteorder::WriteBytesExt;
-use glob::glob;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Seek, SeekFrom},
-    path::{Path, PathBuf},
-    str::FromStr,
+    path::{Path},
 };
 
-use relative_path::RelativePathBuf;
 use thiserror::Error;
-pub use vpk::VPK;
 
 #[derive(Debug, Error)]
 pub enum PatchError {

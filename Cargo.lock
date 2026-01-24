@@ -1031,7 +1031,6 @@ dependencies = [
  "bytes",
  "copy_dir",
  "copy_to_output",
- "crc32fast",
  "derive_more",
  "directories 6.0.0",
  "dmx",
@@ -5677,6 +5676,20 @@ name = "writeable"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e9df38ee2d2c3c5948ea468a8406ff0db0b29ae1ffde1bcf20ef305bcc95c51"
+
+[[package]]
+name = "writevpk"
+version = "0.1.0"
+dependencies = [
+ "buf_read_write",
+ "byteorder",
+ "crc32fast",
+ "md-5",
+ "paths",
+ "thiserror 2.0.17",
+ "typed-path",
+ "vpk",
+]
 
 [[package]]
 name = "x11-dl"

@@ -1,0 +1,15 @@
+[package]
+name = "writevpk"
+description = "helper library for writing data to a VPK"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+buf_read_write.workspace = true
+byteorder.workspace = true
+crc32fast = "1.5"
+md-5.workspace = true
+thiserror.workspace = true
+paths.workspace = true
+typed-path.workspace = true
+vpk.workspace = true

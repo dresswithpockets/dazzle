@@ -31,10 +31,8 @@
 
 mod app;
 mod packing;
-mod patch;
 mod pcf_defaults;
 mod styles;
-mod vpk_writer;
 
 use core::f32;
 use std::{
@@ -303,7 +301,7 @@ fn main() -> anyhow::Result<()> {
     // }
 
     // we can finally generate our _dazzle_addons VPKs from our addon contents.
-    // vpk_writer::pack_directory(&app.working_vpk_dir, &app.tf_custom_dir, "_dazzle_addons", SPLIT_BY_2GB)?;
+    // writevpk::pack_directory(&app.working_vpk_dir, &app.tf_custom_dir, "_dazzle_addons", SPLIT_BY_2GB)?;
 
     // NOTE(dress) after packing everything, cueki does a full-scan of every VPK & file in tf/custom for $ignorez 1 then
     //             replaces each with spaces. This isn't necessary at all, so we just don't do it; anyone can bypass her
@@ -678,7 +676,7 @@ fn default_bin_from(group: &VanillaPcfGroup) -> PcfBin {
 
 //     println!("creating _dazzle_addons.vpk...");
 //     // we can finally generate our _dazzle_addons VPKs from our addon contents.
-//     vpk_writer::pack_directory(&app.working_vpk_dir, &app.tf_custom_dir, "_dazzle_addons", SPLIT_BY_2GB)?;
+//     writevpk::pack_directory(&app.working_vpk_dir, &app.tf_custom_dir, "_dazzle_addons", SPLIT_BY_2GB)?;
 
 //     Ok(())
 // }

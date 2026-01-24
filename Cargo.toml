@@ -14,6 +14,7 @@ members = [
     "paths",
     "pcf",
     "nanoserde",
+    "writevpk",
     "tools/pcftree",
     "tools/pcfstrip",
 ]
@@ -28,10 +29,12 @@ debug = true
 
 [workspace.dependencies]
 anyhow = "1.0"
+buf_read_write = "0.5"
 byteorder = "1.5"
 bytes = "1.11"
 copy_dir = "0.1"
 glob = "0.3"
+md-5 = "0.10"
 ordered-float = "5.0"
 ordermap = "1.0"
 thiserror = "2.0"
@@ -44,15 +47,18 @@ dmx = { path = "dmx" }
 nanoserde = { path = "nanoserde", default-features = false, features = ["std", "json"] }
 paths = { path = "paths" }
 pcf = { path = "pcf" }
+writevpk = { path = "writevpk" }
 
 [dependencies]
 addon.workspace = true
 anyhow.workspace = true
+buf_read_write.workspace = true
 byteorder.workspace = true
 bytes.workspace = true
 dmx.workspace = true
 copy_dir.workspace = true
 glob.workspace = true
+md-5.workspace = true
 nanoserde.workspace = true
 ordermap.workspace = true
 paths.workspace = true
@@ -64,13 +70,10 @@ vpk.workspace = true
 eframe = "0.33"
 egui_extras = { version = "0.33", features = [ "all_loaders" ] }
 image = { version = "0.25", features = [ "png" ]}
-buf_read_write = "0.5"
 directories = { version = "6.0" }
 derive_more = { version = "2.1", features = [ "from", "into", "display" ] }
 relative-path = "2.0"
 single-instance = "0.3"
-crc32fast = "1.5"
-md-5 = "0.10"
 rayon = "1.11"
 rfd = "0.17"
 permissions = "0.5"
