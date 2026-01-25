@@ -6,22 +6,18 @@ mod tf_dir_picker;
 use std::{collections::HashMap, env, ffi::CString, fs, io, mem, str::FromStr, thread::JoinHandle};
 
 use directories::ProjectDirs;
-use eframe::egui::{self, CentralPanel, Layout, Window};
-use egui_extras::{Column, TableBuilder};
+use eframe::egui::{self, CentralPanel, Id, Modal, Sides};
 use nanoserde::DeJson;
 use pcf::Pcf;
 use single_instance::SingleInstance;
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
-use crate::{
-    app::{
-        addon_manager::Manager,
-        initial_load::{LoadError, LoadedData},
-        process::ProcessView,
-    },
+use crate::app::{
+    addon_manager::AddonState,
+    initial_load::{LoadError, LoadedData},
+    process::ProcessView,
 };
-use addon::Addon;
 use tf_dir_picker::TfDirPicker;
 
 use super::{APP_INSTANCE_NAME, APP_NAME, APP_ORG, APP_TLD, PARTICLE_SYSTEM_MAP};
@@ -58,12 +54,37 @@ pub(crate) enum State {
         tf_dir: Utf8PlatformPathBuf,
         bins: Vec<pcfpack::Bin>,
         vanilla_graphs: Vec<(String, Vec<Pcf>)>,
-        manager: Manager,
+        addons: Vec<AddonState>,
+        confirming_delete: Option<usize>,
+    },
+
+    /// The user has decided to delete an addon's contents and remove it from the list.
+    /// Will always transition to [`State::ManagingAddons`]
+    RemovingAddon {
+        tf_dir: Utf8PlatformPathBuf,
+        bins: Vec<pcfpack::Bin>,
+        vanilla_graphs: Vec<(String, Vec<Pcf>)>,
+        addons: Vec<AddonState>,
+        remove_view: ProcessView,
+        job_handle: JoinHandle<Result<(), io::Error>>,
+    },
+
+    /// The user has selected a new addon to be added to the list
+    /// Will always transition to [`State::ManagingAddons`].
+    AddingAddon {
+        tf_dir: Utf8PlatformPathBuf,
+        bins: Vec<pcfpack::Bin>,
+        vanilla_graphs: Vec<(String, Vec<Pcf>)>,
+        addons: Vec<AddonState>,
     },
 
     /// We're processing all of their addons and installing them!
-    /// Will always transitioin to [`State::ChoosingAddons`].
+    /// Will always transition to [`State::ManagingAddons`].
     Installing,
+
+    /// We're restoring tf2_misc.vpk, removing _dazzle_addons.vpk, and removing _dazzle_qpc.vpk
+    /// Will always transition to [`State::ManagingAddons`].
+    Uninstalling,
 
     /// An intermediate value used as the enum's default when using helpers like [`std::mem::take`] and [`std::mem::replace`]
     Intermediate,
@@ -101,6 +122,134 @@ impl App {
             },
         })
     }
+
+    fn update_state_initial_tf_dir(
+        ui: &mut egui::Ui,
+        paths: Paths,
+        mut tf_dir: Option<Utf8PlatformPathBuf>,
+        mut picker: TfDirPicker,
+    ) -> State {
+        if picker.update(ui.ctx(), &mut tf_dir) {
+            let (load_view, job_handle) = initial_load::start_initial_load(ui.ctx(), paths);
+
+            State::InitialLoad {
+                tf_dir: tf_dir.unwrap(),
+                load_view,
+                job_handle,
+            }
+        } else {
+            State::InitialTfDir { tf_dir, picker }
+        }
+    }
+
+    fn update_state_initial_load(
+        ui: &mut egui::Ui,
+        tf_dir: Utf8PlatformPathBuf,
+        mut load_view: ProcessView,
+        job_handle: JoinHandle<Result<LoadedData, LoadError>>,
+    ) -> State {
+        load_view.show("vanilla pcf and addon loading", ui.ctx());
+        if job_handle.is_finished() {
+            // TODO: present errors to the user as a modal
+            let data = job_handle.join().unwrap().unwrap();
+            State::ManagingAddons {
+                tf_dir,
+                bins: data.bins,
+                vanilla_graphs: data.vanilla_graphs,
+                addons: data
+                    .addons
+                    .into_iter()
+                    .map(|addon| AddonState { enabled: true, addon })
+                    .collect(),
+                confirming_delete: None,
+            }
+        } else {
+            State::InitialLoad {
+                tf_dir,
+                load_view,
+                job_handle,
+            }
+        }
+    }
+
+    fn update_state_managing_addons(
+        ui: &mut egui::Ui,
+        tf_dir: Utf8PlatformPathBuf,
+        bins: Vec<pcfpack::Bin>,
+        vanilla_graphs: Vec<(String, Vec<Pcf>)>,
+        mut addons: Vec<AddonState>,
+        mut confirming_delete: Option<usize>,
+    ) -> State {
+        let response = addon_manager::addons_manager(ui, &mut addons);
+        let mut delete_confirmed = None;
+
+        if let Some(delete_idx) = confirming_delete {
+            let modal = Modal::new(Id::new("Confirm Addon Deletion")).show(ui.ctx(), |ui| {
+                ui.set_width(500.0);
+                ui.heading("Are you sure?");
+                ui.add_space(16.0);
+                ui.strong(format!(
+                    "You're about to permanently delete '{}'. Please confirm:",
+                    addons.get(delete_idx).unwrap().addon.name()
+                ));
+                ui.add_space(16.0);
+                Sides::new().show(
+                    ui,
+                    |_ui| {},
+                    |ui| {
+                        if ui.button("Delete It!").clicked() {
+                            delete_confirmed = Some(delete_idx);
+                            ui.close();
+                        }
+
+                        if ui.button("No! Stop that!").clicked() {
+                            ui.close();
+                        }
+                    },
+                )
+            });
+
+            if modal.should_close() {
+                confirming_delete = None;
+            }
+        } else if let Some(action) = response.action {
+            match action {
+                addon_manager::Action::OpenAddonsFolder => todo!(),
+                // TODO: after adding the selected addon, refresh all of our other addons to ensure we're up to date
+                addon_manager::Action::AddAddon => todo!(),
+                // TODO: detect if any of the addons have been changed since load, and ask user for confirmation if they have been
+                // TODO: show installation confirmation modal, then transition accordingly
+                addon_manager::Action::InstallAddons => todo!(),
+                // TODO: show confirmation modal, then transition accordingly
+                addon_manager::Action::UninstallAddons => todo!(),
+                addon_manager::Action::DeleteAddon(delete_idx) => confirming_delete = Some(delete_idx),
+            }
+        }
+
+        // the user confirmed that they want to delete the addon association with this index, so we
+        // should start the delete process & transition to the delete state.
+        if let Some(remove_idx) = delete_confirmed {
+            let addon = addons.remove(remove_idx);
+            let (remove_view, job_handle) = addon_manager::start_addon_removal(ui.ctx(), addon.addon);
+
+            State::RemovingAddon {
+                tf_dir,
+                bins,
+                vanilla_graphs,
+                addons,
+                remove_view,
+                job_handle,
+            }
+        } else {
+            State::ManagingAddons {
+                tf_dir,
+                bins,
+                vanilla_graphs,
+                addons,
+                confirming_delete,
+            }
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -110,59 +259,66 @@ impl eframe::App for App {
             let _ = mem::replace(
                 &mut self.state,
                 match state {
-                    State::InitialTfDir { mut tf_dir, mut picker } => {
-                        if picker.update(ui.ctx(), &mut tf_dir) {
-                            let (load_view, job_handle) =
-                                initial_load::start_initial_load(ui.ctx(), self.paths.clone());
-
-                            State::InitialLoad {
-                                tf_dir: tf_dir.unwrap(),
-                                load_view,
-                                job_handle,
-                            }
-                        } else {
-                            State::InitialTfDir { tf_dir, picker }
-                        }
+                    State::InitialTfDir { tf_dir, picker } => {
+                        Self::update_state_initial_tf_dir(ui, self.paths.clone(), tf_dir, picker)
                     }
                     State::InitialLoad {
                         tf_dir,
-                        mut load_view,
+                        load_view,
                         job_handle,
-                    } => {
-                        load_view.show("vanilla pcf and addon loading", ui.ctx());
-                        if job_handle.is_finished() {
-                            // TODO: present errors to the user as a modal
-                            let data = job_handle.join().unwrap().unwrap();
-                            State::ManagingAddons {
-                                tf_dir,
-                                bins: data.bins,
-                                vanilla_graphs: data.vanilla_graphs,
-                                manager: Manager::new(data.addons),
-                            }
-                        } else {
-                            State::InitialLoad {
-                                tf_dir,
-                                load_view,
-                                job_handle,
-                            }
-                        }
-                    }
+                    } => Self::update_state_initial_load(ui, tf_dir, load_view, job_handle),
                     State::ManagingAddons {
                         tf_dir,
                         bins,
                         vanilla_graphs,
-                        mut manager,
+                        addons,
+                        confirming_delete,
                     } => {
-                        manager.show(ui);
-
-                        State::ManagingAddons {
-                            tf_dir,
-                            bins,
-                            vanilla_graphs,
-                            manager,
+                        Self::update_state_managing_addons(ui, tf_dir, bins, vanilla_graphs, addons, confirming_delete)
+                    }
+                    State::RemovingAddon {
+                        tf_dir,
+                        bins,
+                        vanilla_graphs,
+                        addons,
+                        mut remove_view,
+                        job_handle,
+                    } => {
+                        remove_view.show("removing addon contents", ui.ctx());
+                        if job_handle.is_finished() {
+                            // TODO: present errors to the user as a modal
+                            job_handle.join().unwrap().unwrap();
+                            State::ManagingAddons {
+                                tf_dir,
+                                bins,
+                                vanilla_graphs,
+                                addons,
+                                confirming_delete: None,
+                            }
+                        } else {
+                            State::RemovingAddon {
+                                tf_dir,
+                                bins,
+                                vanilla_graphs,
+                                addons,
+                                remove_view,
+                                job_handle,
+                            }
                         }
                     }
+                    State::AddingAddon {
+                        tf_dir,
+                        bins,
+                        vanilla_graphs,
+                        addons,
+                    } => State::AddingAddon {
+                        tf_dir,
+                        bins,
+                        vanilla_graphs,
+                        addons,
+                    },
                     State::Installing => State::Installing,
+                    State::Uninstalling => State::Uninstalling,
                     State::Intermediate => panic!("under no circumstances should state be Intermediate in the matcher"),
                 },
             );

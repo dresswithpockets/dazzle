@@ -9,7 +9,6 @@ use std::{
 use super::process::ProcessState;
 use eframe::egui;
 use pcf::Pcf;
-use pcfpack::BinPack;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use thiserror::Error;
 
@@ -54,7 +53,8 @@ pub(crate) fn start_initial_load(
     paths: Paths,
 ) -> (ProcessView, JoinHandle<Result<LoadedData, LoadError>>) {
     let loader = InitialLoader::new(paths);
-    let (load_state, load_view) = ProcessState::new(ctx, InitialLoader::operation_steps().try_into().unwrap());
+    let (load_state, load_view) =
+        ProcessState::with_progress_bar(ctx, InitialLoader::operation_steps().try_into().unwrap());
 
     let handle = thread::spawn(move || -> Result<LoadedData, LoadError> { loader.run(&load_state) });
 
@@ -278,5 +278,9 @@ enum VanillaPcfError {
 }
 
 fn default_bin_from(group: &VanillaPcfGroup) -> pcfpack::Bin {
-    pcfpack::Bin::new(group.default.size, group.default.name.clone(), Pcf::new_empty_from(&group.default.pcf))
+    pcfpack::Bin::new(
+        group.default.size,
+        group.default.name.clone(),
+        Pcf::new_empty_from(&group.default.pcf),
+    )
 }

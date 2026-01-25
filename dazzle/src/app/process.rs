@@ -39,11 +39,18 @@ impl ProcessView {
             ..Default::default()
         };
 
-        ui.label(job);
+        if self.steps == 0 {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(job);
+            });
+        } else {
+            ui.label(job);
 
-        #[allow(clippy::cast_precision_loss)]
-        let progress = f32::clamp((self.completed.get() as f32) / (self.steps as f32), 0.0, 1.0);
-        ui.add(ProgressBar::new(progress).animate(true).show_percentage());
+            #[allow(clippy::cast_precision_loss)]
+            let progress = f32::clamp((self.completed.get() as f32) / (self.steps as f32), 0.0, 1.0);
+            ui.add(ProgressBar::new(progress).animate(true).show_percentage());
+        }
     }
 
     pub fn show(&mut self, id: impl Into<WidgetText>, ctx: &egui::Context) {
@@ -66,7 +73,7 @@ pub(crate) struct ProcessState {
 }
 
 impl ProcessState {
-    pub(crate) fn new(ctx: &egui::Context, steps: NonZero<usize>) -> (Self, ProcessView) {
+    fn new(ctx: &egui::Context, steps: usize) -> (Self, ProcessView) {
         let (sender, receiver) = mpsc::channel();
 
         let op = Self {
@@ -76,13 +83,21 @@ impl ProcessState {
         };
 
         let view = ProcessView {
-            steps: steps.into(),
+            steps,
             latest_status: String::new(),
             completed: op.completed.clone(),
             status_receiver: Rc::new(receiver),
         };
 
         (op, view)
+    }
+
+    pub(crate) fn with_spinner(ctx: &egui::Context) -> (Self, ProcessView) {
+        Self::new(ctx, 0)
+    }
+
+    pub(crate) fn with_progress_bar(ctx: &egui::Context, steps: NonZero<usize>) -> (Self, ProcessView) {
+        Self::new(ctx, steps.into())
     }
 
     pub(crate) fn push_status(&self, status: impl Into<String>) {
