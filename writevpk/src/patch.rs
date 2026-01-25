@@ -2,7 +2,7 @@ use byteorder::WriteBytesExt;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Seek, SeekFrom},
-    path::{Path},
+    path::Path,
 };
 
 use thiserror::Error;

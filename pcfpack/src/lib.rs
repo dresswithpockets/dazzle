@@ -14,11 +14,7 @@ pub struct Bin {
 
 impl Bin {
     pub fn new(capacity: u64, name: String, data: Pcf) -> Self {
-        Self {
-            capacity,
-            name,
-            data,
-        }
+        Self { capacity, name, data }
     }
 
     pub fn into_inner(self) -> (String, Pcf) {
@@ -57,7 +53,6 @@ impl BinPack for [Bin] {
 
             bin.data.merged_in(from)?;
 
-            
             // assert_eq!(bin.data.compute_encoded_symbols_size(), estimated_symbols_size);
             // assert_eq!(bin.data.compute_encoded_elements_size(), estimated_elements_size);
             // assert_eq!(bin.data.compute_encoded_root_attributes_size(), estimated_root_size);
