@@ -25,8 +25,7 @@ struct InitialLoader {
 }
 
 pub(crate) struct LoadedData {
-    pub bins: Vec<pcfpack::Bin>,
-    pub vanilla_graphs: Vec<(String, Vec<Pcf>)>,
+    pub vanilla_graphs: Vec<(String, u64, Vec<Pcf>)>,
     pub addons: Vec<Addon>,
 }
 
@@ -101,12 +100,15 @@ impl InitialLoader {
         };
 
         load_operation.push_status("Separating particle tree into connected graphs...");
-        let bins: Vec<_> = vanilla_pcfs.iter().map(default_bin_from).collect();
         let vanilla_graphs: Vec<_> = vanilla_pcfs
             .into_iter()
             .map(|group| {
                 load_operation.push_status(format!("Saparating {} into connected graphs...", group.default.name));
-                (group.default.name, group.default.pcf.into_connected())
+                (
+                    group.default.name,
+                    group.default.size,
+                    group.default.pcf.into_connected(),
+                )
             })
             .collect();
         load_operation.add_progress(30);
@@ -119,7 +121,7 @@ impl InitialLoader {
             // TODO: we should present information about addons that failed to load to the user
             eprintln!("There were some errors reading some or all addon sources:");
             for (path, error) in sources.failures {
-                eprintln!("  {}: {error}", path.display());
+                eprintln!("  {path}: {error}");
             }
         }
 
@@ -141,11 +143,7 @@ impl InitialLoader {
         load_operation.add_progress(30);
         load_operation.push_status("Done!");
 
-        Ok(LoadedData {
-            bins,
-            vanilla_graphs,
-            addons,
-        })
+        Ok(LoadedData { vanilla_graphs, addons })
     }
 
     fn get_vanilla_pcf_groups_from_manifest(

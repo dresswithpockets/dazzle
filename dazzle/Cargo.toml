@@ -43,6 +43,8 @@ rfd = "0.17"
 permissions = "0.5"
 workerpool = "1.2"
 atomic-counter = "1.0"
+itertools = "0.14"
+walkdir = "2.5"
 
 [build-dependencies]
 copy_to_output = "2.2.0"

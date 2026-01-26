@@ -28,6 +28,7 @@
 #![warn(clippy::pedantic)]
 #![feature(push_mut)]
 #![feature(lock_value_accessors)]
+#![feature(mpmc_channel)]
 
 mod app;
 mod pcf_defaults;
@@ -58,9 +59,6 @@ use crate::app::{App, BuildError};
 
 use writevpk::patch::PatchVpkExt;
 
-const SPLIT_BY_2GB: u32 = 2 << 30;
-
-const TF2_VPK_NAME: &str = "tf2_misc_dir.vpk";
 const APP_INSTANCE_NAME: &str = "net.dresswithpockets.dazzletf2.lock";
 const APP_TLD: &str = "net";
 const APP_ORG: &str = "dresswithpockets";

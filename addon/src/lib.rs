@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{self, Read},
-    path::{Path, PathBuf},
+    path::Path,
 };
 use thiserror::Error;
 use typed_path::{CheckedPathError, Utf8PlatformPath, Utf8PlatformPathBuf};
@@ -99,6 +99,10 @@ pub enum ParseError {
 impl Extracted {
     pub fn name(&self) -> Option<&str> {
         self.source_path.file_name()
+    }
+
+    pub fn source_path(&self) -> &Utf8PlatformPath {
+        &self.source_path
     }
 
     fn get_material_files(materials_path: &Utf8PlatformPath) -> anyhow::Result<HashMap<String, Material>> {
@@ -204,7 +208,7 @@ impl Extracted {
 /// A collection of all sources read with [`Sources::read_dir`].
 pub struct Sources {
     pub sources: Box<[Source]>,
-    pub failures: Box<[(PathBuf, Error)]>,
+    pub failures: Box<[(Utf8PlatformPathBuf, Error)]>,
 }
 
 impl Sources {
@@ -219,7 +223,7 @@ impl Sources {
         let mut failures = Vec::new();
         for entry in addons_dir.as_ref().read_dir()? {
             let entry = entry?;
-            let path = entry.path();
+            let path = paths::std_buf_to_typed(entry.path());
             match Source::from_path(&path) {
                 Ok(source) => sources.push(source),
                 Err(err) => failures.push((path, err)),
@@ -233,6 +237,22 @@ impl Sources {
         // let addons_glob = addons_dir.as_ref().join("*");
         // let addons_glob = addons_glob.to_str().expect("this should never happen");
         // glob(addons_glob)?.map(|path| Source::from_path(&path?)).collect()
+    }
+
+    pub fn read_paths(addons: impl Iterator<Item = impl AsRef<Utf8PlatformPath>>) -> Sources {
+        let mut sources = Vec::new();
+        let mut failures = Vec::new();
+        for path in addons {
+            match Source::from_path(path.as_ref()) {
+                Ok(source) => sources.push(source),
+                Err(err) => failures.push((path.as_ref().to_owned(), err)),
+            }
+        }
+
+        Sources {
+            sources: sources.into_boxed_slice(),
+            failures: failures.into_boxed_slice(),
+        }
     }
 }
 
@@ -296,9 +316,8 @@ impl Source {
     /// ## Errors
     ///
     /// - [`Error::UnsupportedAddonType`] if the path points to an addon that doesn't exist, or is not one of the supported types.
-    pub fn from_path(source: &std::path::Path) -> Result<Source, Error> {
+    pub fn from_path(source: &Utf8PlatformPath) -> Result<Source, Error> {
         let metadata = fs::metadata(source)?;
-        let source = std_to_typed(source)?;
         if metadata.is_dir() {
             Ok(Source::Folder(source.to_path_buf()))
         } else if metadata.is_file()
@@ -315,6 +334,13 @@ impl Source {
         match self {
             Source::Folder(utf8_path_buf) => utf8_path_buf.file_name(),
             Source::Vpk(utf8_path_buf) => utf8_path_buf.file_name(),
+        }
+    }
+
+    pub fn into_inner(self) -> Utf8PlatformPathBuf {
+        match self {
+            Source::Folder(utf8_path_buf) => utf8_path_buf,
+            Source::Vpk(utf8_path_buf) => utf8_path_buf,
         }
     }
 

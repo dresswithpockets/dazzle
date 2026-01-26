@@ -20,6 +20,10 @@ impl Bin {
     pub fn into_inner(self) -> (String, Pcf) {
         (self.name, self.data)
     }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 pub trait BinPack {
