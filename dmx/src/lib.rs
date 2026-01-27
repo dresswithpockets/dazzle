@@ -15,6 +15,7 @@ use ordermap::OrderSet;
 pub type Signature = [u8; 16];
 pub type SymbolIdx = u16;
 pub type Symbols = OrderSet<CString>;
+pub use attribute::{Color, Float, Matrix, Vector2, Vector3, Vector4};
 pub use dmx::Dmx;
 pub use index::ElementIdx;
 
