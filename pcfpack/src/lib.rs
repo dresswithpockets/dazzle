@@ -24,6 +24,14 @@ impl Bin {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    pub fn capacity(&self) -> u64 {
+        self.capacity
+    }
+
+    pub fn as_pcf(&self) -> &Pcf {
+        &self.data
+    }
 }
 
 pub trait BinPack {
