@@ -2,5 +2,6 @@
 
 *.code-workspace
 local_test/
-dazzle/vanilla/
+dazzle/vanilla/**/*
+!dazzle/vanilla/.gitkeep
 backup/
