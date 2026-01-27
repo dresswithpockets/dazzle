@@ -70,6 +70,11 @@ pub(crate) enum State {
         addons: Vec<AddonState>,
     },
 
+    ManagingAddonsConfirmingUninstall {
+        config: Config,
+        addons: Vec<AddonState>,
+    },
+
     ManagingAddonsConfirmingDelete {
         config: Config,
         addons: Vec<AddonState>,
@@ -104,7 +109,11 @@ pub(crate) enum State {
     #[allow(clippy::doc_markdown)]
     /// We're restoring tf2_misc.vpk, removing _dazzle_addons.vpk, and removing _dazzle_qpc.vpk
     /// Will always transition to [`State::ManagingAddons`].
-    Uninstalling,
+    Uninstalling {
+        config: Config,
+        uninstall_view: ProcessView,
+        job_handle: JoinHandle<anyhow::Result<Vec<AddonState>>>,
+    },
 
     /// An intermediate value used as the enum's default when using helpers like [`std::mem::take`] and [`std::mem::replace`]
     Intermediate,
@@ -276,7 +285,7 @@ impl App {
                 // TODO: show installation confirmation modal, then transition accordingly
                 addon_manager::Action::InstallAddons => State::ManagingAddonsConfirmingInstall { config, addons },
                 // TODO: show confirmation modal, then transition accordingly
-                addon_manager::Action::UninstallAddons => todo!(),
+                addon_manager::Action::UninstallAddons => State::ManagingAddonsConfirmingUninstall { config, addons },
                 addon_manager::Action::DeleteAddon(delete_idx) => State::ManagingAddonsConfirmingDelete {
                     config,
                     addons,
@@ -333,6 +342,54 @@ impl App {
             State::ManagingAddons { config, addons }
         } else {
             State::ManagingAddonsConfirmingInstall { config, addons }
+        }
+    }
+
+    fn state_managing_addons_confirming_uninstall(
+        &self,
+        ui: &mut egui::Ui,
+        config: Config,
+        mut addons: Vec<AddonState>,
+    ) -> State {
+        // we still want to render the addons manager, even though its disabled via the modal
+        addon_manager::addons_manager(ui, &mut addons);
+
+        let mut uninstall_confirmed = false;
+        let modal = Modal::new(Id::new("Confirm Addon Uninstallation")).show(ui.ctx(), |ui| {
+            ui.set_width(500.0);
+            ui.heading("Are you sure?");
+            ui.add_space(16.0);
+            ui.strong("You're about to uninstall any addons you've previously installed via dazzle.");
+            ui.add_space(16.0);
+            Sides::new().show(
+                ui,
+                |_ui| {},
+                |ui| {
+                    if ui.button("No! Stop that!").clicked() {
+                        ui.close();
+                    }
+
+                    if ui.button("Yes, uninstall!").clicked() {
+                        uninstall_confirmed = true;
+                        ui.close();
+                    }
+                },
+            )
+        });
+
+        if uninstall_confirmed {
+            // the user confirmed that they want to install their addons
+            let (uninstall_view, job_handle) = addon_manager::start_addon_uninstall(ui.ctx(), &self.paths, &config, addons);
+
+            State::Uninstalling {
+                config,
+                uninstall_view,
+                job_handle,
+            }
+        } else if modal.should_close() {
+            State::ManagingAddons { config, addons }
+        } else {
+            State::ManagingAddonsConfirmingUninstall { config, addons }
         }
     }
 
@@ -417,6 +474,9 @@ impl eframe::App for App {
                 State::ManagingAddonsConfirmingInstall { config, addons } => {
                     self.state_managing_addons_confirming_install(ui, config, addons)
                 }
+                State::ManagingAddonsConfirmingUninstall { config, addons } => {
+                    self.state_managing_addons_confirming_uninstall(ui, config, addons)
+                }
                 State::RemovingAddon {
                     config,
                     addons,
@@ -477,7 +537,21 @@ impl eframe::App for App {
                         }
                     }
                 }
-                State::Uninstalling => State::Uninstalling,
+                State::Uninstalling { config, mut uninstall_view, job_handle } => {
+                    uninstall_view.show("installing addons", ui.ctx());
+
+                    if job_handle.is_finished() {
+                        // TODO: present job errors to the user as a modal
+                        let addons = job_handle.join().unwrap().unwrap();
+                        State::ManagingAddons { config, addons }
+                    } else {
+                        State::Uninstalling {
+                            config,
+                            uninstall_view,
+                            job_handle,
+                        }
+                    }
+                },
                 State::Intermediate => panic!("under no circumstances should state be Intermediate in the matcher"),
             };
 
