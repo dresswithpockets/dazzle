@@ -274,8 +274,6 @@ impl Dmx {
         self.write_elements(file)?;
         self.write_element_attributes(file)?;
 
-        file.flush()?;
-
         Ok(())
     }
 
