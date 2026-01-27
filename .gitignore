@@ -2,3 +2,5 @@
 
 *.code-workspace
 local_test/
+dazzle/vanilla/
+backup/
