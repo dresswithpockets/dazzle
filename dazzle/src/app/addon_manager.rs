@@ -14,8 +14,6 @@ use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 
 use addon::{Addon, Sources};
 use itertools::Itertools;
-use ordermap::OrderMap;
-use pcf::Pcf;
 use pcfpack::BinPack;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
@@ -480,7 +478,6 @@ pub fn start_addon_install(
 
     let (state, view) = ProcessState::with_spinner(ctx);
 
-    let backup_dir = paths.backup.clone();
     let working_vpk_dir = paths.working_vpk.clone();
 
     let tf_custom_dir = tf_dir.join("custom");
@@ -556,14 +553,20 @@ pub fn start_addon_install(
         let mut vpk = VPK::read(vpk_path)?;
 
         state.push_status("Restoring tf2_misc.vpk");
-        vpk.restore_particles(&backup_dir)?;
+        for (name, pcf_data) in particles_manifest::PARTICLES_BYTES {
+            let mut reader = pcf_data.reader();
+            vpk.patch_file(name, pcf_data.len() as u64, &mut reader)?;
+        }
+        // vpk.restore_particles(&backup_dir)?;
 
         state.push_status("Removing _dazzle_addons.vpk");
         for entry in fs::read_dir(&tf_custom_dir)? {
             let entry = entry?;
             let path = paths::std_buf_to_typed(entry.path());
             let file_name = path.file_name().unwrap();
-            let is_dazzle = file_name.starts_with("_dazzle_addons") && file_name.ends_with(".vpk");
+            let extension = path.extension().unwrap_or("");
+            let is_dazzle = file_name.starts_with("_dazzle_addons")
+                && (extension.eq_ignore_ascii_case("vpk") || extension.eq_ignore_ascii_case("cache"));
             let metadata = entry.metadata()?;
             if !metadata.is_file() {
                 if is_dazzle {
@@ -591,14 +594,32 @@ pub fn start_addon_install(
             vpk.patch_file(&name, size, &mut reader)?;
         }
 
+        // we can finally generate our _dazzle_addons VPKs from our addon contents.
         state.push_status("Packing addons into _dazzle_addons.vpk");
         writevpk::pack::pack_directory(&working_vpk_dir, &tf_custom_dir, "_dazzle_addons", SPLIT_BY_2GB)?;
+
+        // NOTE(dress) after packing everything, cueki does a full-scan of every VPK & file in tf/custom for $ignorez 1 then
+        //             replaces each with spaces. This isn't necessary at all, so we just don't do it; anyone can bypass her
+        //             code with a modicum of motivation and python knoweledge. Considering how easy it is to remove it from
+        //             her preloader, I wouldn't be surprised if I frequently run into people using $ignorez trickfoolery in
+        //             pubs.
 
         // TODO: do some proper gameinfo parsing since this is pretty flakey if the user has modified gameinfo.txt at all
         state.push_status("Writing gameinfo.txt");
         let gameinfo = fs::read_to_string(&game_info_path)?;
         let gameinfo = gameinfo.replace("type multiplayer_only", "type singleplayer_only");
         fs::write(&game_info_path, gameinfo)?;
+
+        // we delete & re-create the working vpk dir to ensure that its empty before copying addons over. If we dont do
+        // this, then the contents of the addons from the previous install will still be present.
+        state.push_status("Cleaning up working files");
+        if let Err(err) = fs::remove_dir_all(&working_vpk_dir)
+            && err.kind() != ErrorKind::NotFound
+        {
+            Err(err)?;
+        }
+
+        fs::create_dir(&working_vpk_dir)?;
 
         state.push_status("Done!");
         thread::sleep(Duration::from_millis(500));

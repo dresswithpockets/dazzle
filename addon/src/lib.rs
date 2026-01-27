@@ -14,8 +14,6 @@ use thiserror::Error;
 use typed_path::{CheckedPathError, Utf8PlatformPath, Utf8PlatformPathBuf};
 use vpk::VPK;
 
-use paths::{self, std_to_typed};
-
 #[derive(Debug)]
 pub struct Info {
     pub name: String,

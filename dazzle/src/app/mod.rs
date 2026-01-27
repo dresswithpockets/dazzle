@@ -4,14 +4,11 @@ mod initial_load;
 mod process;
 mod tf_dir_picker;
 
-use std::{collections::HashMap, env, ffi::CString, fs, io, mem, str::FromStr, thread::JoinHandle};
+use std::{env, fs, io, mem, thread::JoinHandle};
 
 use addon::Addon;
 use directories::ProjectDirs;
 use eframe::egui::{self, CentralPanel, Id, Modal, Sides};
-use nanoserde::DeJson;
-use ordermap::OrderMap;
-use pcf::Pcf;
 use rfd::FileDialog;
 use single_instance::SingleInstance;
 use thiserror::Error;
@@ -20,13 +17,12 @@ use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 use crate::app::{addon_manager::AddonState, initial_load::LoadError, process::ProcessView};
 use tf_dir_picker::TfDirPicker;
 
-use super::{APP_INSTANCE_NAME, APP_NAME, APP_ORG, APP_TLD, PARTICLE_SYSTEM_MAP};
+use super::{APP_INSTANCE_NAME, APP_NAME, APP_ORG, APP_TLD};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Paths {
     pub addons: Utf8PlatformPathBuf,
     pub extracted_content: Utf8PlatformPathBuf,
-    pub backup: Utf8PlatformPathBuf,
     pub working_vpk: Utf8PlatformPathBuf,
 }
 
@@ -91,6 +87,7 @@ pub(crate) enum State {
         job_handle: JoinHandle<anyhow::Result<Vec<AddonState>>>,
     },
 
+    #[allow(clippy::doc_markdown)]
     /// We're restoring tf2_misc.vpk, removing _dazzle_addons.vpk, and removing _dazzle_qpc.vpk
     /// Will always transition to [`State::ManagingAddons`].
     Uninstalling,
@@ -114,7 +111,6 @@ impl App {
         let extracted_content_dir = create_new_content_cache_dir(&data_dir)?;
         let working_vpk_dir = create_new_working_vpk_dir(&data_dir)?;
         let addons_dir = create_addons_dir(&data_dir)?;
-        let backup_dir = get_backup_dir()?;
 
         let tf_dir = get_default_platform_tf_dir();
 
@@ -122,7 +118,6 @@ impl App {
             paths: Paths {
                 addons: addons_dir,
                 extracted_content: extracted_content_dir,
-                backup: backup_dir,
                 working_vpk: working_vpk_dir,
             },
             state: State::InitialTfDir {
@@ -192,7 +187,7 @@ impl App {
                 addon_manager::Action::OpenTfFolder => {
                     file_explorer::open_file_explorer(&tf_dir);
                     State::ManagingAddons { tf_dir, addons }
-                },
+                }
                 // TODO: after adding the selected addon, refresh all of our other addons to ensure we're up to date
                 addon_manager::Action::AddAddonFiles => {
                     match FileDialog::new().add_filter("Addon", &["vpk"]).pick_files() {
@@ -462,12 +457,6 @@ pub(crate) enum BuildError {
 
     #[error("couldn't create the addons directory, due to an IO error")]
     CantCreateAddonsDirectory(io::Error),
-
-    #[error("couldn't find the backup assets directory")]
-    MissingBackupDirectory,
-
-    #[error("couldn't find the backup assets directory, due to an IO error")]
-    IoBackupDirectory(io::Error),
 }
 
 #[cfg(target_os = "windows")]
@@ -526,7 +515,7 @@ fn create_project_dirs() -> Result<ProjectDirs, BuildError> {
 
 fn get_data_dir(dirs: &ProjectDirs) -> Utf8PlatformPathBuf {
     let working_dir = dirs.data_local_dir();
-    paths::to_typed(&working_dir).into_owned()
+    paths::to_typed(working_dir).into_owned()
 }
 
 fn get_config_path(dirs: &ProjectDirs) -> Utf8PlatformPathBuf {
@@ -562,29 +551,4 @@ fn create_addons_dir(dir: &Utf8PlatformPath) -> Result<Utf8PlatformPathBuf, Buil
     let addons_dir = dir.join("addons");
     fs::create_dir_all(&addons_dir).map_err(BuildError::CantCreateAddonsDirectory)?;
     Ok(addons_dir)
-}
-
-fn get_backup_dir() -> Result<Utf8PlatformPathBuf, BuildError> {
-    let backup_dir = Utf8PlatformPathBuf::from_str("./backup")
-        .expect("from_str should always succeed with this path")
-        .absolutize()
-        .map_err(BuildError::IoBackupDirectory)?;
-
-    let metadata = fs::metadata(&backup_dir).map_err(|err| {
-        if err.kind() == io::ErrorKind::NotFound {
-            BuildError::MissingBackupDirectory
-        } else {
-            BuildError::IoBackupDirectory(err)
-        }
-    })?;
-
-    if metadata.is_dir() {
-        Ok(backup_dir)
-    } else {
-        Err(BuildError::MissingBackupDirectory)
-    }
-}
-
-fn get_vanilla_pcf_map() -> HashMap<String, Vec<CString>> {
-    DeJson::deserialize_json(PARTICLE_SYSTEM_MAP).expect("the PARTICLE_SYSTEM_MAP should always be valid JSON")
 }
