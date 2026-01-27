@@ -138,7 +138,11 @@ fn write_index_archive(
                 stream.write_u32::<LittleEndian>(entry.crc)?;
                 // this impl doesnt support writing preload data, so there is always 0
                 stream.write_u16::<LittleEndian>(0)?;
-                stream.write_u16::<LittleEndian>(entry.archive_idx)?;
+                if last_archive_idx == 0 {
+                    stream.write_u16::<LittleEndian>(u16::MAX >> 1)?;
+                } else {
+                    stream.write_u16::<LittleEndian>(entry.archive_idx)?;
+                }
                 stream.write_u32::<LittleEndian>(entry.offset)?;
                 stream.write_u32::<LittleEndian>(entry.size)?;
                 stream.write_u16::<LittleEndian>(0xFFFF)?;
