@@ -5,10 +5,7 @@ mod initial_load;
 mod process;
 mod tf_dir_picker;
 
-use std::{
-    env, fs, io, mem,
-    thread::JoinHandle,
-};
+use std::{env, fs, io, mem, thread::JoinHandle};
 
 use addon::Addon;
 use directories::ProjectDirs;
@@ -379,7 +376,8 @@ impl App {
 
         if uninstall_confirmed {
             // the user confirmed that they want to install their addons
-            let (uninstall_view, job_handle) = addon_manager::start_addon_uninstall(ui.ctx(), &self.paths, &config, addons);
+            let (uninstall_view, job_handle) =
+                addon_manager::start_addon_uninstall(ui.ctx(), &self.paths, &config, addons);
 
             State::Uninstalling {
                 config,
@@ -537,7 +535,11 @@ impl eframe::App for App {
                         }
                     }
                 }
-                State::Uninstalling { config, mut uninstall_view, job_handle } => {
+                State::Uninstalling {
+                    config,
+                    mut uninstall_view,
+                    job_handle,
+                } => {
                     uninstall_view.show("installing addons", ui.ctx());
 
                     if job_handle.is_finished() {
@@ -551,7 +553,7 @@ impl eframe::App for App {
                             job_handle,
                         }
                     }
-                },
+                }
                 State::Intermediate => panic!("under no circumstances should state be Intermediate in the matcher"),
             };
 
