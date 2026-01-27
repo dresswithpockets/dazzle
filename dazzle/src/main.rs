@@ -127,7 +127,7 @@ fn main() -> anyhow::Result<()> {
             .with_app_id(APP_ID)
             .with_inner_size([1280.0, 720.0])
             .with_drag_and_drop(true)
-            .with_title("Welcome to Dazzle!")
+            .with_title("Dazzle, a TF2 mod installer")
             .with_resizable(false),
         ..Default::default()
     };
