@@ -31,33 +31,23 @@
 #![feature(mpmc_channel)]
 
 mod app;
+mod particles_manifest;
 mod pcf_defaults;
 mod styles;
 
-use core::f32;
 use std::{
-    collections::{BTreeMap, HashMap},
-    env::{self, consts::OS},
+    collections::HashMap,
     fs::{self, File},
     io::{self, ErrorKind},
-    path::PathBuf,
-    sync::Arc,
 };
 
-use addon::Sources;
-use bytes::{Buf, BufMut, BytesMut};
-use directories::ProjectDirs;
-use dmx::Dmx;
-use eframe::egui::{self, Align2, CentralPanel, FontFamily, RichText, TextEdit, TextStyle, Vec2b, Window};
+use eframe::egui::{self, Align2, CentralPanel, Window};
 use pcf::Pcf;
-use pcfpack::Bin;
 use rayon::prelude::*;
 use thiserror::Error;
-use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
+use typed_path::Utf8PlatformPath;
 
 use crate::app::{App, BuildError};
-
-use writevpk::patch::PatchVpkExt;
 
 const APP_INSTANCE_NAME: &str = "net.dresswithpockets.dazzletf2.lock";
 const APP_TLD: &str = "net";

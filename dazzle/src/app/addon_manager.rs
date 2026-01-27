@@ -14,6 +14,7 @@ use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 
 use addon::{Addon, Sources};
 use itertools::Itertools;
+use ordermap::OrderMap;
 use pcf::Pcf;
 use pcfpack::BinPack;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -22,11 +23,16 @@ use vpk::VPK;
 use walkdir::WalkDir;
 use writevpk::patch::PatchVpkExt;
 
-use crate::app::{
-    Paths,
-    initial_load::LoadError,
-    process::{ProcessState, ProcessView},
+use crate::{
+    app::{
+        Paths,
+        initial_load::LoadError,
+        process::{ProcessState, ProcessView},
+    },
+    particles_manifest,
 };
+
+const SPLIT_BY_2GB: u32 = 2 << 30;
 
 #[derive(Debug)]
 pub struct AddonState {
@@ -326,8 +332,8 @@ pub fn start_addon_add(
     assert!(!files.is_empty());
 
     let steps = (files.len() * 3) + 1;
-    let addons_dir = paths.addons_dir.clone();
-    let extracted_content_dir = paths.extracted_content_dir.clone();
+    let addons_dir = paths.addons.clone();
+    let extracted_content_dir = paths.extracted_content.clone();
     let (state, view) = ProcessState::with_progress_bar(ctx, steps.try_into().unwrap());
     let handle = thread::spawn(move || -> (Vec<AddonState>, Vec<(Utf8PlatformPathBuf, LoadError)>) {
         let original_count = files.len();
@@ -450,151 +456,147 @@ pub fn start_addon_install(
     ctx: &egui::Context,
     paths: &Paths,
     tf_dir: &Utf8PlatformPath,
-    vanilla_graphs: Vec<(String, u64, Vec<Pcf>)>,
     addons: Vec<AddonState>,
-) -> (
-    ProcessView,
-    JoinHandle<anyhow::Result<(Vec<(String, u64, Vec<Pcf>)>, Vec<AddonState>)>>,
-) {
+) -> (ProcessView, JoinHandle<anyhow::Result<Vec<AddonState>>>) {
     const TF2_VPK_NAME: &str = "tf2_misc_dir.vpk";
 
-    let mut bins: Vec<pcfpack::Bin> = vanilla_graphs
-        .iter()
-        .map(|(name, size, graphs)| {
-            pcfpack::Bin::new(*size, name.clone(), Pcf::new_empty_from(graphs.first().unwrap()))
-        })
-        .collect();
+    let mut bins = particles_manifest::bins();
+    let vanilla_graphs = particles_manifest::graphs();
+
+    // let mut bins: Vec<pcfpack::Bin> = vanilla_graphs
+    //     .iter()
+    //     .map(|(name, size, graphs)| {
+    //         pcfpack::Bin::new(*size, name.clone(), Pcf::new_empty_from(graphs.first().unwrap()))
+    //     })
+    //     .collect();
 
     let (state, view) = ProcessState::with_spinner(ctx);
 
-    let backup_dir = paths.backup_dir.clone();
-    let working_vpk_dir = paths.working_vpk_dir.clone();
+    let backup_dir = paths.backup.clone();
+    let working_vpk_dir = paths.working_vpk.clone();
 
     let tf_custom_dir = tf_dir.join("custom");
     let vpk_path = tf_dir.join(TF2_VPK_NAME);
     let game_info_path = tf_dir.join("gameinfo.txt");
 
-    let handle = thread::spawn(
-        move || -> anyhow::Result<(Vec<(String, u64, Vec<Pcf>)>, Vec<AddonState>)> {
-            let mut packed_system_names = HashSet::new();
+    let handle = thread::spawn(move || -> anyhow::Result<Vec<AddonState>> {
+        let mut packed_system_names = HashSet::new();
 
-            for addon_state in &addons {
-                if !addon_state.enabled {
-                    continue;
-                }
+        for addon_state in &addons {
+            if !addon_state.enabled {
+                continue;
+            }
 
-                for (path, pcf) in &addon_state.addon.particle_files {
-                    state.push_status(format!("Bin-packing {}'s {path}", addon_state.addon.name()));
-                    let graph = pcf.clone().into_connected();
-                    for mut pcf in graph {
-                        packed_system_names.extend(pcf.particle_systems().iter().map(|system| system.name.clone()));
-                        bins.pack(&mut pcf).unwrap();
-                    }
-                }
-
-                // first we bin-pack our addons' custom particles
-                let content_path = &addon_state.addon.content_path;
-                for entry in WalkDir::new(content_path).contents_first(false) {
-                    let entry = entry?;
-                    let metadata = entry.metadata()?;
-
-                    state.push_status(format!(
-                        "Copying {}'s {}",
-                        addon_state.addon.name(),
-                        entry.path().display()
-                    ));
-
-                    let path = paths::to_typed(entry.path()).absolutize()?;
-                    let new_out_path = working_vpk_dir.join(path.strip_prefix(content_path)?);
-
-                    // create the directory before we copy anything over. We guarantee that the directory is iterated first
-                    // with contents_first(false) earlier
-                    if metadata.is_dir() {
-                        if let Err(err) = fs::create_dir(&new_out_path)
-                            && err.kind() != io::ErrorKind::AlreadyExists
-                        {
-                            return Err(err.into());
-                        }
-                        continue;
-                    }
-
-                    fs::copy(&path, &new_out_path)?;
+            for (path, pcf) in &addon_state.addon.particle_files {
+                state.push_status(format!("Bin-packing {}'s {path}", addon_state.addon.name()));
+                let graph = pcf.clone().into_connected();
+                for mut pcf in graph {
+                    packed_system_names.extend(pcf.particle_systems().iter().map(|system| system.name.clone()));
+                    bins.pack(&mut pcf).unwrap();
                 }
             }
 
-            // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank
-            // slate for our addons; so, we pack every vanilla particle system not present in the bins.
-            for (name, _, graphs) in &vanilla_graphs {
-                state.push_status(format!("Bin-packing missing vanilla particle systems from {name}."));
-
-                for graph in graphs {
-                    if graph
-                        .particle_systems()
-                        .iter()
-                        .any(|system| !packed_system_names.contains(&system.name))
-                    {
-                        let mut pcf = graph.clone();
-                        bins.pack(&mut pcf).unwrap();
-                    }
-                }
-            }
-
-            // TODO: create quickprecache assets for props & pack them into _dazzle_qpc.vpk
-
-            let mut vpk = VPK::read(vpk_path)?;
-
-            state.push_status("Restoring tf2_misc.vpk");
-            vpk.restore_particles(&backup_dir)?;
-
-            state.push_status("Removing _dazzle_addons.vpk");
-            for entry in fs::read_dir(&tf_custom_dir)? {
+            // first we bin-pack our addons' custom particles
+            let content_path = &addon_state.addon.content_path;
+            for entry in WalkDir::new(content_path).contents_first(false) {
                 let entry = entry?;
-                let path = paths::std_buf_to_typed(entry.path());
-                let file_name = path.file_name().unwrap();
-                let is_dazzle = file_name.starts_with("_dazzle_addons") && file_name.ends_with(".vpk");
                 let metadata = entry.metadata()?;
-                if !metadata.is_file() {
-                    if is_dazzle {
-                        return Err(anyhow!("Unexpected directory or symlink with _dazzle_addons*.vpk name"));
+
+                state.push_status(format!(
+                    "Copying {}'s {}",
+                    addon_state.addon.name(),
+                    entry.path().display()
+                ));
+
+                let path = paths::to_typed(entry.path()).absolutize()?;
+                let new_out_path = working_vpk_dir.join(path.strip_prefix(content_path)?);
+
+                // create the directory before we copy anything over. We guarantee that the directory is iterated first
+                // with contents_first(false) earlier
+                if metadata.is_dir() {
+                    if let Err(err) = fs::create_dir(&new_out_path)
+                        && err.kind() != io::ErrorKind::AlreadyExists
+                    {
+                        return Err(err.into());
                     }
                     continue;
                 }
 
-                if is_dazzle {
-                    fs::remove_file(&path)?;
+                fs::copy(&path, &new_out_path)?;
+            }
+        }
+
+        // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank
+        // slate for our addons; so, we pack every vanilla particle system not present in the bins.
+        for (name, graphs) in &vanilla_graphs {
+            state.push_status(format!("Bin-packing missing vanilla particle systems from {name}."));
+
+            for graph in graphs {
+                if graph
+                    .particle_systems()
+                    .iter()
+                    .any(|system| !packed_system_names.contains(&system.name))
+                {
+                    let mut pcf = graph.clone();
+                    bins.pack(&mut pcf).unwrap();
                 }
             }
+        }
 
-            for bin in bins {
-                let (name, pcf) = bin.into_inner();
-                state.push_status(format!("Writing tf2_misc.vpk/{name}"));
-                let dmx: Dmx = pcf.into();
+        // TODO: create quickprecache assets for props & pack them into _dazzle_qpc.vpk
 
-                let mut writer = BytesMut::new().writer();
-                dmx.encode(&mut writer)?;
+        let mut vpk = VPK::read(vpk_path)?;
 
-                let buffer = writer.into_inner();
-                let size = buffer.len() as u64;
-                let mut reader = buffer.reader();
-                vpk.patch_file(&name, size, &mut reader)?;
+        state.push_status("Restoring tf2_misc.vpk");
+        vpk.restore_particles(&backup_dir)?;
+
+        state.push_status("Removing _dazzle_addons.vpk");
+        for entry in fs::read_dir(&tf_custom_dir)? {
+            let entry = entry?;
+            let path = paths::std_buf_to_typed(entry.path());
+            let file_name = path.file_name().unwrap();
+            let is_dazzle = file_name.starts_with("_dazzle_addons") && file_name.ends_with(".vpk");
+            let metadata = entry.metadata()?;
+            if !metadata.is_file() {
+                if is_dazzle {
+                    return Err(anyhow!("Unexpected directory or symlink with _dazzle_addons*.vpk name"));
+                }
+                continue;
             }
 
-            const SPLIT_BY_2GB: u32 = 2 << 30;
-            state.push_status("Packing addons into _dazzle_addons.vpk");
-            writevpk::pack::pack_directory(&working_vpk_dir, &tf_custom_dir, "_dazzle_addons", SPLIT_BY_2GB)?;
+            if is_dazzle {
+                fs::remove_file(&path)?;
+            }
+        }
 
-            // TODO: do some proper gameinfo parsing since this is pretty flakey if the user has modified gameinfo.txt at all
-            state.push_status("Writing gameinfo.txt");
-            let gameinfo = fs::read_to_string(&game_info_path)?;
-            let gameinfo = gameinfo.replace("type multiplayer_only", "type singleplayer_only");
-            fs::write(&game_info_path, gameinfo)?;
+        for bin in bins {
+            let (name, pcf) = bin.into_inner();
+            state.push_status(format!("Writing tf2_misc.vpk/{name}"));
+            let dmx: Dmx = pcf.into();
 
-            state.push_status("Done!");
-            thread::sleep(Duration::from_millis(500));
+            let mut writer = BytesMut::new().writer();
+            dmx.encode(&mut writer)?;
 
-            Ok((vanilla_graphs, addons))
-        },
-    );
+            let buffer = writer.into_inner();
+            let size = buffer.len() as u64;
+            let mut reader = buffer.reader();
+            vpk.patch_file(&name, size, &mut reader)?;
+        }
+
+        state.push_status("Packing addons into _dazzle_addons.vpk");
+        writevpk::pack::pack_directory(&working_vpk_dir, &tf_custom_dir, "_dazzle_addons", SPLIT_BY_2GB)?;
+
+        // TODO: do some proper gameinfo parsing since this is pretty flakey if the user has modified gameinfo.txt at all
+        state.push_status("Writing gameinfo.txt");
+        let gameinfo = fs::read_to_string(&game_info_path)?;
+        let gameinfo = gameinfo.replace("type multiplayer_only", "type singleplayer_only");
+        fs::write(&game_info_path, gameinfo)?;
+
+        state.push_status("Done!");
+        thread::sleep(Duration::from_millis(500));
+
+        Ok(addons)
+    });
 
     (view, handle)
 }

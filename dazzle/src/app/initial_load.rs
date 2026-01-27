@@ -24,11 +24,6 @@ struct InitialLoader {
     particle_system_defaults: Arc<HashMap<&'static str, pcf::Attribute>>,
 }
 
-pub(crate) struct LoadedData {
-    pub vanilla_graphs: Vec<(String, u64, Vec<Pcf>)>,
-    pub addons: Vec<Addon>,
-}
-
 #[derive(Debug, Error)]
 pub(crate) enum LoadError {
     #[error(transparent)]
@@ -50,12 +45,12 @@ pub(crate) enum LoadError {
 pub(crate) fn start_initial_load(
     ctx: &egui::Context,
     paths: Paths,
-) -> (ProcessView, JoinHandle<Result<LoadedData, LoadError>>) {
+) -> (ProcessView, JoinHandle<Result<Vec<Addon>, LoadError>>) {
     let loader = InitialLoader::new(paths);
     let (load_state, load_view) =
         ProcessState::with_progress_bar(ctx, InitialLoader::operation_steps().try_into().unwrap());
 
-    let handle = thread::spawn(move || -> Result<LoadedData, LoadError> { loader.run(&load_state) });
+    let handle = thread::spawn(move || -> Result<Vec<Addon>, LoadError> { loader.run(&load_state) });
 
     (load_view, handle)
 }
@@ -70,51 +65,12 @@ impl InitialLoader {
     }
 
     fn operation_steps() -> usize {
-        (pcf_defaults::PARTICLES_MANIFEST.len() * 2) + 120
+        90
     }
 
-    fn run(&self, load_operation: &ProcessState) -> Result<LoadedData, LoadError> {
-        load_operation.push_status("Loading vanilla particle systems");
-        let groups = Self::get_vanilla_pcf_groups_from_manifest(load_operation).unwrap();
-        let vanilla_pcfs: Vec<_> = {
-            groups
-                .into_par_iter()
-                .filter(|group| {
-                    load_operation.increment_progress();
-                    group.dx80.is_none() && group.dx90_slow.is_none()
-                })
-                .map(|group| {
-                    load_operation.push_status(format!("stripping {} of unnecessary defaults", &group.default.name));
-                    let pcf = group.default.pcf.defaults_stripped_nth(
-                        1000,
-                        &self.particle_system_defaults,
-                        &self.operator_defaults,
-                    );
-
-                    VanillaPcfGroup {
-                        default: VanillaPcf { pcf, ..group.default },
-                        ..group
-                    }
-                })
-                .collect()
-        };
-
-        load_operation.push_status("Separating particle tree into connected graphs...");
-        let vanilla_graphs: Vec<_> = vanilla_pcfs
-            .into_iter()
-            .map(|group| {
-                load_operation.push_status(format!("Saparating {} into connected graphs...", group.default.name));
-                (
-                    group.default.name,
-                    group.default.size,
-                    group.default.pcf.into_connected(),
-                )
-            })
-            .collect();
-        load_operation.add_progress(30);
-
+    fn run(&self, load_operation: &ProcessState) -> Result<Vec<Addon>, LoadError> {
         load_operation.push_status("Loading addons...");
-        let sources = Sources::read_dir(&self.paths.addons_dir)?;
+        let sources = Sources::read_dir(&self.paths.addons)?;
         load_operation.add_progress(30);
 
         if !sources.failures.is_empty() {
@@ -130,7 +86,7 @@ impl InitialLoader {
             .into_par_iter()
             .map(|source| {
                 load_operation.push_status(format!("Extracting addon {}", source.name().unwrap_or_default()));
-                source.extract_as_subfolder_in(&self.paths.extracted_content_dir)
+                source.extract_as_subfolder_in(&self.paths.extracted_content)
             })
             .collect();
         load_operation.add_progress(30);
@@ -143,7 +99,7 @@ impl InitialLoader {
         load_operation.add_progress(30);
         load_operation.push_status("Done!");
 
-        Ok(LoadedData { vanilla_graphs, addons })
+        Ok(addons)
     }
 
     fn get_vanilla_pcf_groups_from_manifest(

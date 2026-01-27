@@ -4,33 +4,30 @@ mod initial_load;
 mod process;
 mod tf_dir_picker;
 
-use std::{collections::HashMap, env, ffi::CString, fs, io, mem, path::PathBuf, str::FromStr, thread::JoinHandle};
+use std::{collections::HashMap, env, ffi::CString, fs, io, mem, str::FromStr, thread::JoinHandle};
 
 use addon::Addon;
 use directories::ProjectDirs;
 use eframe::egui::{self, CentralPanel, Id, Modal, Sides};
 use nanoserde::DeJson;
+use ordermap::OrderMap;
 use pcf::Pcf;
 use rfd::FileDialog;
 use single_instance::SingleInstance;
 use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
-use crate::app::{
-    addon_manager::AddonState,
-    initial_load::{LoadError, LoadedData},
-    process::ProcessView,
-};
+use crate::app::{addon_manager::AddonState, initial_load::LoadError, process::ProcessView};
 use tf_dir_picker::TfDirPicker;
 
 use super::{APP_INSTANCE_NAME, APP_NAME, APP_ORG, APP_TLD, PARTICLE_SYSTEM_MAP};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Paths {
-    pub addons_dir: Utf8PlatformPathBuf,
-    pub extracted_content_dir: Utf8PlatformPathBuf,
-    pub backup_dir: Utf8PlatformPathBuf,
-    pub working_vpk_dir: Utf8PlatformPathBuf,
+    pub addons: Utf8PlatformPathBuf,
+    pub extracted_content: Utf8PlatformPathBuf,
+    pub backup: Utf8PlatformPathBuf,
+    pub working_vpk: Utf8PlatformPathBuf,
 }
 
 #[derive(Debug)]
@@ -48,26 +45,23 @@ pub(crate) enum State {
     InitialLoad {
         tf_dir: Utf8PlatformPathBuf,
         load_view: ProcessView,
-        job_handle: JoinHandle<Result<LoadedData, LoadError>>,
+        job_handle: JoinHandle<Result<Vec<Addon>, LoadError>>,
     },
 
     /// The user is picking which addons to enable/disable, and re-ordering their load priority.
     /// Will always transition to [`State::Installing`].
     ManagingAddons {
         tf_dir: Utf8PlatformPathBuf,
-        vanilla_graphs: Vec<(String, u64, Vec<Pcf>)>,
         addons: Vec<AddonState>,
     },
 
     ManagingAddonsConfirmingInstall {
         tf_dir: Utf8PlatformPathBuf,
-        vanilla_graphs: Vec<(String, u64, Vec<Pcf>)>,
         addons: Vec<AddonState>,
     },
 
     ManagingAddonsConfirmingDelete {
         tf_dir: Utf8PlatformPathBuf,
-        vanilla_graphs: Vec<(String, u64, Vec<Pcf>)>,
         addons: Vec<AddonState>,
         delete_idx: usize,
     },
@@ -76,7 +70,6 @@ pub(crate) enum State {
     /// Will always transition to [`State::ManagingAddons`]
     RemovingAddon {
         tf_dir: Utf8PlatformPathBuf,
-        vanilla_graphs: Vec<(String, u64, Vec<Pcf>)>,
         addons: Vec<AddonState>,
         remove_view: ProcessView,
         job_handle: JoinHandle<Result<(), io::Error>>,
@@ -86,7 +79,6 @@ pub(crate) enum State {
     /// Will always transition to [`State::ManagingAddons`].
     AddingAddons {
         tf_dir: Utf8PlatformPathBuf,
-        vanilla_graphs: Vec<(String, u64, Vec<Pcf>)>,
         add_view: ProcessView,
         job_handle: JoinHandle<(Vec<AddonState>, Vec<(Utf8PlatformPathBuf, LoadError)>)>,
     },
@@ -96,7 +88,7 @@ pub(crate) enum State {
     Installing {
         tf_dir: Utf8PlatformPathBuf,
         install_view: ProcessView,
-        job_handle: JoinHandle<anyhow::Result<(Vec<(String, u64, Vec<Pcf>)>, Vec<AddonState>)>>,
+        job_handle: JoinHandle<anyhow::Result<Vec<AddonState>>>,
     },
 
     /// We're restoring tf2_misc.vpk, removing _dazzle_addons.vpk, and removing _dazzle_qpc.vpk
@@ -128,10 +120,10 @@ impl App {
 
         Ok(Self {
             paths: Paths {
-                addons_dir,
-                extracted_content_dir,
-                backup_dir,
-                working_vpk_dir,
+                addons: addons_dir,
+                extracted_content: extracted_content_dir,
+                backup: backup_dir,
+                working_vpk: working_vpk_dir,
             },
             state: State::InitialTfDir {
                 tf_dir: None,
@@ -163,17 +155,15 @@ impl App {
         ui: &mut egui::Ui,
         tf_dir: Utf8PlatformPathBuf,
         mut load_view: ProcessView,
-        job_handle: JoinHandle<Result<LoadedData, LoadError>>,
+        job_handle: JoinHandle<Result<Vec<Addon>, LoadError>>,
     ) -> State {
         load_view.show("vanilla pcf and addon loading", ui.ctx());
         if job_handle.is_finished() {
             // TODO: present errors to the user as a modal
-            let data = job_handle.join().unwrap().unwrap();
+            let addons = job_handle.join().unwrap().unwrap();
             State::ManagingAddons {
                 tf_dir,
-                vanilla_graphs: data.vanilla_graphs,
-                addons: data
-                    .addons
+                addons: addons
                     .into_iter()
                     .map(|addon| AddonState { enabled: true, addon })
                     .collect(),
@@ -191,18 +181,13 @@ impl App {
         &self,
         ui: &mut egui::Ui,
         tf_dir: Utf8PlatformPathBuf,
-        vanilla_graphs: Vec<(String, u64, Vec<Pcf>)>,
         mut addons: Vec<AddonState>,
     ) -> State {
         if let Some(action) = addon_manager::addons_manager(ui, &mut addons).action {
             match action {
                 addon_manager::Action::OpenAddonsFolder => {
-                    file_explorer::open_file_explorer(&self.paths.addons_dir);
-                    State::ManagingAddons {
-                        tf_dir,
-                        vanilla_graphs,
-                        addons,
-                    }
+                    file_explorer::open_file_explorer(&self.paths.addons);
+                    State::ManagingAddons { tf_dir, addons }
                 }
                 // TODO: after adding the selected addon, refresh all of our other addons to ensure we're up to date
                 addon_manager::Action::AddAddonFiles => {
@@ -214,16 +199,11 @@ impl App {
 
                             State::AddingAddons {
                                 tf_dir,
-                                vanilla_graphs,
                                 add_view,
                                 job_handle,
                             }
                         }
-                        _ => State::ManagingAddons {
-                            tf_dir,
-                            vanilla_graphs,
-                            addons,
-                        },
+                        _ => State::ManagingAddons { tf_dir, addons },
                     }
                 }
                 addon_manager::Action::AddAddonFolders => match FileDialog::new().pick_folders() {
@@ -234,39 +214,25 @@ impl App {
 
                         State::AddingAddons {
                             tf_dir,
-                            vanilla_graphs,
                             add_view,
                             job_handle,
                         }
                     }
-                    _ => State::ManagingAddons {
-                        tf_dir,
-                        vanilla_graphs,
-                        addons,
-                    },
+                    _ => State::ManagingAddons { tf_dir, addons },
                 },
                 // TODO: detect if any of the addons have been changed since load, and ask user for confirmation if they have been
                 // TODO: show installation confirmation modal, then transition accordingly
-                addon_manager::Action::InstallAddons => State::ManagingAddonsConfirmingInstall {
-                    tf_dir,
-                    vanilla_graphs,
-                    addons,
-                },
+                addon_manager::Action::InstallAddons => State::ManagingAddonsConfirmingInstall { tf_dir, addons },
                 // TODO: show confirmation modal, then transition accordingly
                 addon_manager::Action::UninstallAddons => todo!(),
                 addon_manager::Action::DeleteAddon(delete_idx) => State::ManagingAddonsConfirmingDelete {
                     tf_dir,
-                    vanilla_graphs,
                     addons,
                     delete_idx,
                 },
             }
         } else {
-            State::ManagingAddons {
-                tf_dir,
-                vanilla_graphs,
-                addons,
-            }
+            State::ManagingAddons { tf_dir, addons }
         }
     }
 
@@ -274,7 +240,6 @@ impl App {
         &self,
         ui: &mut egui::Ui,
         tf_dir: Utf8PlatformPathBuf,
-        vanilla_graphs: Vec<(String, u64, Vec<Pcf>)>,
         mut addons: Vec<AddonState>,
     ) -> State {
         // we still want to render the addons manager, even though its disabled via the modal
@@ -305,8 +270,7 @@ impl App {
 
         if install_confirmed {
             // the user confirmed that they want to install their addons
-            let (install_view, job_handle) =
-                addon_manager::start_addon_install(ui.ctx(), &self.paths, &tf_dir, vanilla_graphs, addons);
+            let (install_view, job_handle) = addon_manager::start_addon_install(ui.ctx(), &self.paths, &tf_dir, addons);
 
             State::Installing {
                 tf_dir,
@@ -314,24 +278,15 @@ impl App {
                 job_handle,
             }
         } else if modal.should_close() {
-            State::ManagingAddons {
-                tf_dir,
-                vanilla_graphs,
-                addons,
-            }
+            State::ManagingAddons { tf_dir, addons }
         } else {
-            State::ManagingAddonsConfirmingInstall {
-                tf_dir,
-                vanilla_graphs,
-                addons,
-            }
+            State::ManagingAddonsConfirmingInstall { tf_dir, addons }
         }
     }
 
     fn state_managing_addons_confirming_delete(
         ui: &mut egui::Ui,
         tf_dir: Utf8PlatformPathBuf,
-        vanilla_graphs: Vec<(String, u64, Vec<Pcf>)>,
         mut addons: Vec<AddonState>,
         delete_idx: usize,
     ) -> State {
@@ -372,21 +327,15 @@ impl App {
 
             State::RemovingAddon {
                 tf_dir,
-                vanilla_graphs,
                 addons,
                 remove_view,
                 job_handle,
             }
         } else if modal.should_close() {
-            State::ManagingAddons {
-                tf_dir,
-                vanilla_graphs,
-                addons,
-            }
+            State::ManagingAddons { tf_dir, addons }
         } else {
             State::ManagingAddonsConfirmingDelete {
                 tf_dir,
-                vanilla_graphs,
                 addons,
                 delete_idx,
             }
@@ -406,25 +355,17 @@ impl eframe::App for App {
                     load_view,
                     job_handle,
                 } => Self::state_initial_load(ui, tf_dir, load_view, job_handle),
-                State::ManagingAddons {
-                    tf_dir,
-                    vanilla_graphs,
-                    addons,
-                } => self.state_managing_addons(ui, tf_dir, vanilla_graphs, addons),
+                State::ManagingAddons { tf_dir, addons } => self.state_managing_addons(ui, tf_dir, addons),
                 State::ManagingAddonsConfirmingDelete {
                     tf_dir,
-                    vanilla_graphs,
                     addons,
                     delete_idx,
-                } => Self::state_managing_addons_confirming_delete(ui, tf_dir, vanilla_graphs, addons, delete_idx),
-                State::ManagingAddonsConfirmingInstall {
-                    tf_dir,
-                    vanilla_graphs,
-                    addons,
-                } => self.state_managing_addons_confirming_install(ui, tf_dir, vanilla_graphs, addons),
+                } => Self::state_managing_addons_confirming_delete(ui, tf_dir, addons, delete_idx),
+                State::ManagingAddonsConfirmingInstall { tf_dir, addons } => {
+                    self.state_managing_addons_confirming_install(ui, tf_dir, addons)
+                }
                 State::RemovingAddon {
                     tf_dir,
-                    vanilla_graphs,
                     addons,
                     mut remove_view,
                     job_handle,
@@ -433,15 +374,10 @@ impl eframe::App for App {
                     if job_handle.is_finished() {
                         // TODO: present job errors to the user as a modal
                         job_handle.join().unwrap().unwrap();
-                        State::ManagingAddons {
-                            tf_dir,
-                            vanilla_graphs,
-                            addons,
-                        }
+                        State::ManagingAddons { tf_dir, addons }
                     } else {
                         State::RemovingAddon {
                             tf_dir,
-                            vanilla_graphs,
                             addons,
                             remove_view,
                             job_handle,
@@ -450,7 +386,6 @@ impl eframe::App for App {
                 }
                 State::AddingAddons {
                     tf_dir,
-                    vanilla_graphs,
                     mut add_view,
                     job_handle,
                 } => {
@@ -460,13 +395,11 @@ impl eframe::App for App {
                         let result = job_handle.join().unwrap();
                         State::ManagingAddons {
                             tf_dir,
-                            vanilla_graphs,
                             addons: result.0,
                         }
                     } else {
                         State::AddingAddons {
                             tf_dir,
-                            vanilla_graphs,
                             add_view,
                             job_handle,
                         }
@@ -481,12 +414,8 @@ impl eframe::App for App {
 
                     if job_handle.is_finished() {
                         // TODO: present job errors to the user as a modal
-                        let (vanilla_graphs, addons) = job_handle.join().unwrap().unwrap();
-                        State::ManagingAddons {
-                            tf_dir,
-                            vanilla_graphs,
-                            addons,
-                        }
+                        let addons = job_handle.join().unwrap().unwrap();
+                        State::ManagingAddons { tf_dir, addons }
                     } else {
                         State::Installing {
                             tf_dir,
