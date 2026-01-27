@@ -5,14 +5,13 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
-keyvalues-parser = "0.2"
-
-anyhow = { workspace = true }
-copy_dir = { workspace = true }
-dmx = { workspace = true }
-glob = { workspace = true }
-paths = { workspace = true }
-pcf = { workspace = true }
-thiserror = { workspace = true }
-typed-path = { workspace = true }
-vpk = { workspace = true }
+anyhow.workspace = true
+copy_dir.workspace = true
+dmx.workspace = true
+glob.workspace = true
+keyvalues-parser.workspace = true
+paths.workspace = true
+pcf.workspace = true
+thiserror.workspace = true
+typed-path.workspace = true
+vpk.workspace = true
