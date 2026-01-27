@@ -20,8 +20,9 @@ use crate::{
 
 pub type SymbolIdx = u16;
 pub type ParticleSystemIdx = usize;
+pub type AttributeMap = OrderMap<SymbolIdx, Attribute>;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Pcf {
     version: Version,
     symbols: Symbols,
@@ -29,16 +30,30 @@ pub struct Pcf {
     encoded_size: usize,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Root {
     name: String,
     signature: Signature,
     particle_systems: Box<[ParticleSystem]>,
-    attributes: OrderMap<SymbolIdx, Attribute>,
+    attributes: AttributeMap,
 }
 
 impl Root {
-    pub fn into_parts(self) -> (String, Signature, Box<[ParticleSystem]>, OrderMap<SymbolIdx, Attribute>) {
+    pub fn new(
+        name: String,
+        signature: Signature,
+        particle_systems: Box<[ParticleSystem]>,
+        attributes: AttributeMap,
+    ) -> Self {
+        Self {
+            name,
+            signature,
+            particle_systems,
+            attributes,
+        }
+    }
+
+    pub fn into_parts(self) -> (String, Signature, Box<[ParticleSystem]>, AttributeMap) {
         (self.name, self.signature, self.particle_systems, self.attributes)
     }
 
@@ -54,7 +69,7 @@ impl Root {
         &self.particle_systems
     }
 
-    pub fn attributes(&self) -> &OrderMap<SymbolIdx, Attribute> {
+    pub fn attributes(&self) -> &AttributeMap {
         &self.attributes
     }
 }
@@ -113,6 +128,17 @@ pub enum MergeError {
 }
 
 impl Pcf {
+    pub fn new(version: Version, symbols: Symbols, root: Root) -> Self {
+        let mut result = Self {
+            version,
+            symbols,
+            root,
+            encoded_size: 0,
+        };
+        result.encoded_size = result.compute_encoded_size();
+        result
+    }
+
     pub fn version(&self) -> Version {
         self.version
     }
@@ -133,7 +159,7 @@ impl Pcf {
     pub fn merged(self, from: Self) -> Result<Self, MergeError> {
         fn reindex_new_attributes(
             old_to_new_string_idx: &HashMap<u16, u16>,
-            attributes: OrderMap<SymbolIdx, Attribute>,
+            attributes: AttributeMap,
         ) -> impl Iterator<Item = (u16, Attribute)> {
             attributes.into_iter().map(|(name_idx, attribute)| {
                 let name_idx = old_to_new_string_idx
@@ -938,10 +964,7 @@ impl Pcf {
             self.symbols.base.insert(symbol);
         }
 
-        fn remap_attributes(
-            old_to_new_idx: &HashMap<u16, u16>,
-            attributes: OrderMap<SymbolIdx, Attribute>,
-        ) -> OrderMap<SymbolIdx, Attribute> {
+        fn remap_attributes(old_to_new_idx: &HashMap<u16, u16>, attributes: AttributeMap) -> AttributeMap {
             attributes
                 .into_iter()
                 .map(|(name_idx, attribute)| {
@@ -1578,21 +1601,21 @@ impl From<Pcf> for Dmx {
     }
 }
 
-fn attribute_map_to_dmx_map(map: OrderMap<SymbolIdx, Attribute>) -> OrderMap<SymbolIdx, dmx::attribute::Attribute> {
+fn attribute_map_to_dmx_map(map: AttributeMap) -> OrderMap<SymbolIdx, dmx::attribute::Attribute> {
     map.into_iter()
         .map(|(name_idx, attribute)| (name_idx, dmx::attribute::Attribute::from(attribute)))
         .collect()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Child {
     pub name: String,
     pub signature: Signature,
     pub child: ElementIdx,
-    pub attributes: OrderMap<SymbolIdx, Attribute>,
+    pub attributes: AttributeMap,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ParticleSystem {
     pub name: String,
     pub signature: Signature,
@@ -1603,15 +1626,15 @@ pub struct ParticleSystem {
     pub initializers: Box<[Operator]>,
     pub operators: Box<[Operator]>,
     pub renderers: Box<[Operator]>,
-    pub attributes: OrderMap<SymbolIdx, Attribute>,
+    pub attributes: AttributeMap,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Operator {
     pub name: String,
     pub function_name: String,
     pub signature: Signature,
-    pub attributes: OrderMap<SymbolIdx, Attribute>,
+    pub attributes: AttributeMap,
 }
 
 impl Operator {
@@ -1625,7 +1648,7 @@ impl Operator {
             return Err(Error::MissingFunctionName);
         };
 
-        let mut attributes: OrderMap<SymbolIdx, Attribute> = OrderMap::new();
+        let mut attributes: AttributeMap = OrderMap::new();
         for (name_idx, attribute) in &element.attributes {
             if symbols.function_name.is_some_and(|idx| *name_idx == idx) {
                 continue;
