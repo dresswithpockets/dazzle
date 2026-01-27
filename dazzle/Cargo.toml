@@ -9,6 +9,7 @@ license = "Apache-2.0"
 
 [features]
 default = []
+skip-with-dx80-dx90_slow = []
 
 [dependencies]
 addon.workspace = true

@@ -39,8 +39,9 @@ fn main() -> anyhow::Result<()> {
                 }
 
                 let stem = file.trim_suffix(".pcf");
-                if fs::exists(format!("vanilla/{stem}_dx80.pcf"))?
-                    || fs::exists(format!("vanilla/{stem}_dx90_slow.pcf"))?
+                if cfg!(feature = "skip-with-dx80-dx90_slow")
+                    && (fs::exists(format!("vanilla/{stem}_dx80.pcf"))?
+                        || fs::exists(format!("vanilla/{stem}_dx90_slow.pcf"))?)
                 {
                     continue;
                 }
