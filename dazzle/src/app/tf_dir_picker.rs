@@ -26,8 +26,7 @@ impl TfDirPicker {
 
     pub(crate) fn update(&mut self, ctx: &egui::Context, tf_dir: &mut Option<Utf8PlatformPathBuf>) -> bool {
         let mut done = false;
-        egui::Window::new("tf dir picker")
-            .title_bar(false)
+        egui::Window::new("Welcome")
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, (0.0, 0.0))
@@ -35,10 +34,28 @@ impl TfDirPicker {
             .scroll(Vec2b::FALSE)
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
+
+                    ui.horizontal(|ui| {
+                        ui.strong(egui::RichText::new("This is dazzle").text_style(styles::big()));
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new(" - a mod installer for Team Fortress 2.").text_style(styles::big()))
+                    });
+
+                    ui.add_space(24.0);
+
                     ui.label(
-                        egui::RichText::new("Dazzle handles installing mods into your Team Fortress 2 installation. Please select a valid path to your game's \"tf\" directory.")
+                        egui::RichText::new("Dazzle will process many kinds of mods & install them into your Team Fortress 2 installation. Mods installed by dazzle will typically work in Casual and other sv_pure servers!")
                             .text_style(styles::big())
                     );
+
+                    ui.add_space(16.0);
+
+                    ui.label(
+                        egui::RichText::new("In order to install mods, dazzle needs to know where your TF2 installation is. Please provide a valid path to your 'Team Fortress 2/tf' directory:")
+                            .text_style(styles::big())
+                    );
+
+                    ui.add_space(16.0);
 
                     ui.group(|ui| ui.horizontal(|ui| {
                         let changed = TextEdit::singleline(&mut self.picked_dir).desired_width(f32::INFINITY)

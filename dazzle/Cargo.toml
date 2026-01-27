@@ -46,6 +46,8 @@ workerpool = "1.2"
 atomic-counter = "1.0"
 itertools = "0.14"
 walkdir = "2.5"
+serde = "1.0"
+toml = "0.9"
 
 [build-dependencies]
 anyhow.workspace = true

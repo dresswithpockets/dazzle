@@ -16,7 +16,7 @@ use addon::{Addon, Sources};
 use itertools::Itertools;
 use pcfpack::BinPack;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
+use typed_path::Utf8PlatformPathBuf;
 use vpk::VPK;
 use walkdir::WalkDir;
 use writevpk::patch::PatchVpkExt;
@@ -24,6 +24,7 @@ use writevpk::patch::PatchVpkExt;
 use crate::{
     app::{
         Paths,
+        config::{self, AddonConfig, Config},
         initial_load::LoadError,
         process::{ProcessState, ProcessView},
     },
@@ -461,32 +462,43 @@ pub fn start_addon_add(
 pub fn start_addon_install(
     ctx: &egui::Context,
     paths: &Paths,
-    tf_dir: &Utf8PlatformPath,
+    config: &Config,
     addons: Vec<AddonState>,
 ) -> (ProcessView, JoinHandle<anyhow::Result<Vec<AddonState>>>) {
     const TF2_VPK_NAME: &str = "tf2_misc_dir.vpk";
-
-    let mut bins = particles_manifest::bins();
-    let vanilla_graphs = particles_manifest::graphs();
-
-    // let mut bins: Vec<pcfpack::Bin> = vanilla_graphs
-    //     .iter()
-    //     .map(|(name, size, graphs)| {
-    //         pcfpack::Bin::new(*size, name.clone(), Pcf::new_empty_from(graphs.first().unwrap()))
-    //     })
-    //     .collect();
 
     let (state, view) = ProcessState::with_spinner(ctx);
 
     let working_vpk_dir = paths.working_vpk.clone();
 
-    let tf_custom_dir = tf_dir.join("custom");
-    let vpk_path = tf_dir.join(TF2_VPK_NAME);
-    let game_info_path = tf_dir.join("gameinfo.txt");
+    let tf_custom_dir = config.tf_dir.join("custom");
+    let vpk_path = config.tf_dir.join(TF2_VPK_NAME);
+    let game_info_path = config.tf_dir.join("gameinfo.txt");
+    let config_path = paths.config.clone();
+    let mut config = config.clone();
 
     let handle = thread::spawn(move || -> anyhow::Result<Vec<AddonState>> {
-        let mut packed_system_names = HashSet::new();
+        state.push_status("Saving updated config");
+        for (idx, addon_state) in addons.iter().enumerate() {
+            config
+                .addons
+                .entry(addon_state.addon.name().to_string())
+                .and_modify(|addon_config| {
+                    addon_config.enabled = addon_state.enabled;
+                    addon_config.order = idx;
+                })
+                .or_insert(AddonConfig {
+                    enabled: addon_state.enabled,
+                    order: idx,
+                });
+        }
+        config::write_config(&config_path, &config)?;
 
+        state.push_status("Loading particle graph from manifest");
+        let mut bins = particles_manifest::bins();
+        let vanilla_graphs = particles_manifest::graphs();
+
+        let mut packed_system_names = HashSet::new();
         for addon_state in &addons {
             if !addon_state.enabled {
                 continue;
@@ -629,3 +641,5 @@ pub fn start_addon_install(
 
     (view, handle)
 }
+
+pub fn start_addon_uninstall() {}

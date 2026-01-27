@@ -32,9 +32,10 @@ pub(crate) enum LoadError {
 
 pub(crate) fn start_initial_load(
     ctx: &egui::Context,
-    paths: Paths,
+    paths: &Paths,
 ) -> (ProcessView, JoinHandle<Result<Vec<Addon>, LoadError>>) {
-    let loader = InitialLoader::new(paths);
+    let loader = InitialLoader { paths: paths.clone() };
+
     let (load_state, load_view) =
         ProcessState::with_progress_bar(ctx, InitialLoader::operation_steps().try_into().unwrap());
 
@@ -44,10 +45,6 @@ pub(crate) fn start_initial_load(
 }
 
 impl InitialLoader {
-    fn new(paths: Paths) -> Self {
-        Self { paths }
-    }
-
     fn operation_steps() -> usize {
         90
     }
