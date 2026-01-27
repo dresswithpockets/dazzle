@@ -40,7 +40,7 @@ pub mod new;
 mod strings;
 
 pub use attribute::Attribute;
-pub use new::{ParticleSystem, Pcf, Root};
+pub use new::{AttributeMap, Child, Operator, ParticleSystem, Pcf, Root, Symbols};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
