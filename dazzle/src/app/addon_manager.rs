@@ -216,22 +216,22 @@ fn actions(ui: &mut egui::Ui) -> Option<Action> {
     let mut response = None;
     StripBuilder::new(ui)
         .cell_layout(Layout::left_to_right(egui::Align::Center))
-        .size(Size::remainder())
-        .size(Size::remainder())
+        .size(Size::relative(0.225))
+        .size(Size::relative(0.225))
         .size(Size::remainder())
         .size(Size::remainder())
         .horizontal(|mut strip| {
             strip.cell(|ui| {
                 ui.vertical_centered_justified(|ui| {
                     if ui
-                        .button("Add Addon Files")
+                        .button("Add Addon - From Vpk")
                         .on_hover_text("open a dialogue to select an archive files (vpk, zip, tarball, etc) to install")
                         .clicked()
                     {
                         response = Some(Action::AddAddonFiles);
                     }
                     if ui
-                        .button("Add Addon Folders")
+                        .button("Add Addon - From Folder")
                         .on_hover_text("open a dialogue to select addon folders to install")
                         .clicked()
                     {
@@ -240,13 +240,20 @@ fn actions(ui: &mut egui::Ui) -> Option<Action> {
                 });
             });
             strip.cell(|ui| {
-                ui.centered_and_justified(|ui| {
+                ui.vertical_centered_justified(|ui| {
                     if ui
                         .button("Open Addons Folder")
                         .on_hover_text("opens dazzle addons folder in your file explorer")
                         .clicked()
                     {
                         response = Some(Action::OpenAddonsFolder);
+                    }
+                    if ui
+                        .button("Open TF Folder")
+                        .on_hover_text("opens the TF folder folder in your file explorer")
+                        .clicked()
+                    {
+                        response = Some(Action::OpenTfFolder);
                     }
                 });
             });
@@ -286,6 +293,7 @@ pub struct Response {
 pub enum Action {
     DeleteAddon(usize),
     OpenAddonsFolder,
+    OpenTfFolder,
     AddAddonFiles,
     AddAddonFolders,
     InstallAddons,

@@ -189,6 +189,10 @@ impl App {
                     file_explorer::open_file_explorer(&self.paths.addons);
                     State::ManagingAddons { tf_dir, addons }
                 }
+                addon_manager::Action::OpenTfFolder => {
+                    file_explorer::open_file_explorer(&tf_dir);
+                    State::ManagingAddons { tf_dir, addons }
+                },
                 // TODO: after adding the selected addon, refresh all of our other addons to ensure we're up to date
                 addon_manager::Action::AddAddonFiles => {
                     match FileDialog::new().add_filter("Addon", &["vpk"]).pick_files() {
