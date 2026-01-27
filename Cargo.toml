@@ -5,6 +5,7 @@ members = [
     "addon",
     "dazzle",
     "dmx",
+    "faccess",
     "paths",
     "pcf",
     "pcfpack",
@@ -32,6 +33,7 @@ vpk = "0.3"
 
 addon = { path = "addon"}
 dmx = { path = "dmx" }
+faccess = { path = "faccess" }
 nanoserde = { path = "nanoserde", default-features = false, features = ["std", "json"] }
 paths = { path = "paths" }
 pcf = { path = "pcf" }

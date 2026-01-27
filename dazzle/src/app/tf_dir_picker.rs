@@ -1,4 +1,5 @@
 use eframe::egui::{self, Align2, TextEdit, TextStyle, Vec2b};
+use faccess::PathExt;
 use std::{
     fs,
     io::{self, ErrorKind},
@@ -176,23 +177,7 @@ pub(crate) fn validate(path: &Utf8PlatformPath) -> Result<(), TfValidationError>
         return Err(TfValidationError::CustomNotADirectory);
     }
 
-    let readable = permissions::is_readable(&custom_dir).map_err(|err| match err.kind() {
-        ErrorKind::NotFound => TfValidationError::MissingCustomFolder,
-        ErrorKind::PermissionDenied => TfValidationError::MissingCustomFolderPermissions,
-        _ => TfValidationError::Io(err),
-    })?;
-
-    if !readable {
-        return Err(TfValidationError::MissingCustomFolderPermissions);
-    }
-
-    let writable = permissions::is_writable(&custom_dir).map_err(|err| match err.kind() {
-        ErrorKind::NotFound => TfValidationError::MissingCustomFolder,
-        ErrorKind::PermissionDenied => TfValidationError::MissingCustomFolderPermissions,
-        _ => TfValidationError::Io(err),
-    })?;
-
-    if !writable {
+    if !custom_dir.readable() || !custom_dir.writable() {
         return Err(TfValidationError::MissingCustomFolderPermissions);
     }
 
@@ -207,23 +192,7 @@ pub(crate) fn validate(path: &Utf8PlatformPath) -> Result<(), TfValidationError>
         return Err(TfValidationError::VpkNotAFile);
     }
 
-    let readable = permissions::is_readable(&tf2_misc_vpk).map_err(|err| match err.kind() {
-        ErrorKind::NotFound => TfValidationError::MissingVpk,
-        ErrorKind::PermissionDenied => TfValidationError::MissingVpkPermissions,
-        _ => TfValidationError::Io(err),
-    })?;
-
-    if !readable {
-        return Err(TfValidationError::MissingVpkPermissions);
-    }
-
-    let writable = permissions::is_writable(&tf2_misc_vpk).map_err(|err| match err.kind() {
-        ErrorKind::NotFound => TfValidationError::MissingVpk,
-        ErrorKind::PermissionDenied => TfValidationError::MissingVpkPermissions,
-        _ => TfValidationError::Io(err),
-    })?;
-
-    if !writable {
+    if !tf2_misc_vpk.readable() || !tf2_misc_vpk.writable() {
         return Err(TfValidationError::MissingVpkPermissions);
     }
 

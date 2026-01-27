@@ -1036,6 +1036,7 @@ dependencies = [
  "dmx",
  "eframe",
  "egui_extras",
+ "faccess",
  "glob",
  "image",
  "itertools 0.14.0",
@@ -1046,7 +1047,6 @@ dependencies = [
  "paths",
  "pcf",
  "pcfpack",
- "permissions",
  "rayon",
  "relative-path",
  "rfd",
@@ -1554,6 +1554,15 @@ dependencies = [
  "rayon-core",
  "smallvec",
  "zune-inflate",
+]
+
+[[package]]
+name = "faccess"
+version = "0.2.4"
+dependencies = [
+ "bitflags 1.3.2",
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -3217,15 +3226,6 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
-
-[[package]]
-name = "permissions"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc52a15e41afdb46f5eab7de08e76ab26738c5b1071b9be315551bdf3c5174c9"
-dependencies = [
- "libc",
-]
 
 [[package]]
 name = "pest"

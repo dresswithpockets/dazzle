@@ -1,3 +1,6 @@
 [submodule "nanoserde"]
 	path = nanoserde
 	url = https://github.com/dresswithpockets/nanoserde
+[submodule "faccess"]
+	path = faccess
+	url = https://github.com/dresswithpockets/faccess
