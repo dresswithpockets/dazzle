@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Read, Seek, Write},
-    os::unix::fs::MetadataExt,
 };
 
 use buf_read_write::BufStream;
@@ -284,7 +283,7 @@ fn get_vpk_tree(source: &Utf8PlatformPath) -> Result<VpkTree<Entry>, Error> {
                 continue;
             }
 
-            let size = metadata.size() as u32;
+            let size = metadata.len() as u32;
             let extension = source_path.extension().unwrap_or(" ").to_string();
             let filename = source_path.file_stem().unwrap_or(" ").to_string();
 
