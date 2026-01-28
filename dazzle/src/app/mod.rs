@@ -261,7 +261,14 @@ impl App {
                                 job_handle,
                             }
                         }
-                        _ => State::ManagingAddons { config, addons },
+                        Some(_) => {
+                            eprintln!("No files selected");
+                            State::ManagingAddons { config, addons }
+                        }
+                        None => {
+                            eprintln!("FileDialog didnt return anything");
+                            State::ManagingAddons { config, addons }
+                        },
                     }
                 }
                 addon_manager::Action::AddAddonFolders => match FileDialog::new().pick_folders() {
