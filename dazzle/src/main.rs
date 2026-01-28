@@ -29,6 +29,7 @@
 #![feature(push_mut)]
 #![feature(lock_value_accessors)]
 #![feature(mpmc_channel)]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
 mod particles_manifest;
