@@ -268,7 +268,7 @@ impl App {
                         None => {
                             eprintln!("FileDialog didnt return anything");
                             State::ManagingAddons { config, addons }
-                        },
+                        }
                     }
                 }
                 addon_manager::Action::AddAddonFolders => match FileDialog::new().pick_folders() {
