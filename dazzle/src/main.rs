@@ -150,8 +150,5 @@ fn main() -> anyhow::Result<()> {
 
     // TODO: filter out PCFs based on user selection, for now we'll just pick the first one in the list if there are conflicting PCFs
 
-    // we can finally generate our _dazzle_addons VPKs from our addon contents.
-    // writevpk::pack_directory(&app.working_vpk_dir, &app.tf_custom_dir, "_dazzle_addons", SPLIT_BY_2GB)?;
-
     Ok(())
 }
