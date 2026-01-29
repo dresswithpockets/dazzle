@@ -299,7 +299,9 @@ pub enum Action {
     UninstallAddons,
 }
 
-pub fn start_addon_removal(ctx: &egui::Context, addon: Addon) -> (ProcessView, JoinHandle<Result<(), io::Error>>) {
+pub type RemovingAddonJob = JoinHandle<Result<(), io::Error>>;
+
+pub fn start_addon_removal(ctx: &egui::Context, addon: Addon) -> (ProcessView, RemovingAddonJob) {
     let (state, view) = ProcessState::with_spinner(ctx);
     let handle = thread::spawn(move || -> Result<(), io::Error> {
         state.push_status(format!("Removing '{}'", addon.name()));
@@ -327,15 +329,14 @@ pub fn start_addon_removal(ctx: &egui::Context, addon: Addon) -> (ProcessView, J
     (view, handle)
 }
 
+pub type AddingAddonsJob = JoinHandle<(Vec<AddonState>, Vec<(Utf8PlatformPathBuf, LoadError)>)>;
+
 pub fn start_addon_add(
     ctx: &egui::Context,
     paths: &Paths,
     mut addons: Vec<AddonState>,
     files: Vec<Utf8PlatformPathBuf>,
-) -> (
-    ProcessView,
-    JoinHandle<(Vec<AddonState>, Vec<(Utf8PlatformPathBuf, LoadError)>)>,
-) {
+) -> (ProcessView, AddingAddonsJob) {
     assert!(!files.is_empty());
 
     let steps = (files.len() * 3) + 1;
@@ -350,6 +351,7 @@ pub fn start_addon_add(
                 let name = file.file_name().unwrap();
 
                 if addons.iter().any(|state| state.addon.name().eq_ignore_ascii_case(name)) {
+                    eprintln!("Confirming: 'An addon with the name '{name}' has already been added. What do you want to do?'");
                     let choice = state.confirm(
                         format!("An addon with the name '{name}' has already been added. What do you want to do?"),
                         ["Skip", "Replace Existing"],
@@ -357,7 +359,7 @@ pub fn start_addon_add(
 
                     choice == 1
                 } else {
-                    false
+                    true
                 }
             })
             .collect();
@@ -375,6 +377,7 @@ pub fn start_addon_add(
             .into_iter()
             .map(
                 |file| -> Result<Utf8PlatformPathBuf, (Utf8PlatformPathBuf, io::Error)> {
+                    eprintln!("Copying {file} to addons folder");
                     state.push_status(format!("Copying {file} to addons folder"));
 
                     let target = addons_dir.join(file.file_name().unwrap());
@@ -396,6 +399,7 @@ pub fn start_addon_add(
             return (addons, errors);
         }
 
+        eprintln!("Reading sources");
         state.push_status("Reading sources");
 
         let sources = Sources::read_paths(files.iter());

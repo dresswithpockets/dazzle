@@ -8,6 +8,7 @@ mod tf_dir_picker;
 use std::{env, fs, io, mem, thread::JoinHandle};
 
 use addon::Addon;
+use derive_more::From;
 use directories::ProjectDirs;
 use eframe::egui::{self, CentralPanel, Id, Modal, Sides};
 use rfd::FileDialog;
@@ -16,9 +17,9 @@ use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
 use crate::app::{
-    addon_manager::AddonState,
+    addon_manager::{Action, AddingAddonsJob, AddonState, RemovingAddonJob},
     config::{Config, Error},
-    initial_load::LoadError,
+    initial_load::InitialLoadJob,
     process::ProcessView,
 };
 use tf_dir_picker::TfDirPicker;
@@ -33,84 +34,513 @@ pub(crate) struct Paths {
     pub config: Utf8PlatformPathBuf,
 }
 
+pub trait HandleState {
+    fn handle(self, ui: &mut egui::Ui, app: &mut App) -> State;
+}
+
 #[derive(Debug)]
+pub(crate) struct Launch {
+    config: Config,
+}
+
+impl Launch {
+    pub fn new(config: Config) -> Self {
+        Self { config }
+    }
+}
+
+impl HandleState for Launch {
+    fn handle(self, ui: &mut egui::Ui, app: &mut App) -> State {
+        if self.config.tf_dir.as_str().is_empty() {
+            ConfiguringTfDir::new(self.config, get_default_platform_tf_dir()).into()
+        } else if tf_dir_picker::validate(&self.config.tf_dir).is_err() {
+            let tf_dir = self.config.tf_dir.to_string();
+            ConfiguringTfDir::new(self.config, tf_dir).into()
+        } else {
+            InitialLoad::new(self.config, ui.ctx(), &app.paths).into()
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ConfiguringTfDir {
+    config: Config,
+    picker: TfDirPicker,
+}
+
+impl ConfiguringTfDir {
+    pub fn new(config: Config, tf_path: String) -> Self {
+        let picker = TfDirPicker::new(tf_path);
+        Self {
+            config,
+            picker,
+        }
+    }
+}
+
+impl HandleState for ConfiguringTfDir {
+    fn handle(mut self, ui: &mut egui::Ui, app: &mut App) -> State {
+        let mut tf_dir = if self.config.tf_dir.as_str().is_empty() {
+            None
+        } else {
+            Some(self.config.tf_dir)
+        };
+
+        if self.picker.update(ui.ctx(), &mut tf_dir) {
+            let config = Config {
+                tf_dir: tf_dir.unwrap(),
+                ..self.config
+            };
+
+            // TODO: present errors to the user as a modal
+            config::write_config(&app.paths.config, &config).unwrap();
+
+            InitialLoad::new(config, ui.ctx(), &app.paths).into()
+        } else {
+            Self {
+                config: Config {
+                    tf_dir: tf_dir.unwrap(),
+                    ..self.config
+                },
+                picker: self.picker,
+            }.into()
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct InitialLoad {
+    config: Config,
+    view: ProcessView,
+    job: InitialLoadJob,
+}
+
+impl InitialLoad {
+    pub fn new(config: Config, ctx: &egui::Context, paths: &Paths) -> Self {
+        let (view, job) = initial_load::start_initial_load(ctx, paths);
+
+        Self {
+            config,
+            view,
+            job,
+        }
+    }
+}
+
+impl HandleState for InitialLoad {
+    fn handle(mut self, ui: &mut egui::Ui, _app: &mut App) -> State {
+        self.view.show("vanilla pcf and addon loading", ui.ctx());
+
+        if self.job.is_finished() {
+            // TODO: present errors to the user as a modal
+            let addons = self.job.join().unwrap().unwrap();
+            let mut addons: Vec<_> = addons
+                .into_iter()
+                .map(|addon| (self.config.addons.get(addon.name()).copied().unwrap_or_default(), addon))
+                .collect();
+
+            addons.sort_by_key(|(config, _)| config.order);
+
+            let addons = addons.into_iter()
+                    .map(|(config, addon)| AddonState {
+                        enabled: config.enabled,
+                        addon,
+                    })
+                    .collect();
+
+            ManagingAddons::new(self.config, addons).into()
+        } else {
+            self.into()
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ManagingAddonsState {
+    Managing,
+    ConfirmingInstall,
+    ConfirmingUninstall,
+    ConfirmingDelete(usize),
+}
+
+#[derive(Debug)]
+pub(crate) struct ManagingAddons {
+    config: Config,
+    addons: Vec<AddonState>,
+    state: ManagingAddonsState,
+}
+
+impl ManagingAddons {
+    pub fn new(config: Config, addons: Vec<AddonState>) -> Self {
+        Self {
+            config,
+            addons,
+            state: ManagingAddonsState::Managing,
+        }
+    }
+
+    fn handle_add_addon_files(self, ui: &mut egui::Ui, app: &mut App) -> State {
+        match FileDialog::new().add_filter("Addon", &["vpk"]).pick_files() {
+            Some(files) if !files.is_empty() => {
+                let files = files.into_iter().map(paths::std_buf_to_typed).collect();
+
+                AddingAddons::new(self.config, self.addons, files, ui.ctx(), app).into()
+            }
+            _ => self.into(),
+        }
+    }
+
+    fn handle_add_addon_folders(self, ui: &mut egui::Ui, app: &mut App) -> State {
+        match FileDialog::new().pick_folders() {
+            Some(files) if !files.is_empty() => {
+                let files = files.into_iter().map(paths::std_buf_to_typed).collect();
+
+                AddingAddons::new(self.config, self.addons, files, ui.ctx(), app).into()
+            }
+            _ => self.into(),
+        }
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn handle_action(self, action: Action, ui: &mut egui::Ui, app: &mut App) -> State {
+        match action {
+            Action::OpenAddonsFolder => {
+                file_explorer::open_file_explorer(&app.paths.addons);
+                self.into()
+            }
+            Action::OpenTfFolder => {
+                file_explorer::open_file_explorer(&self.config.tf_dir);
+                self.into()
+            }
+            // TODO: after adding the selected addon, refresh all of our other addons to ensure we're up to date
+            Action::AddAddonFiles => self.handle_add_addon_files(ui, app),
+            Action::AddAddonFolders => self.handle_add_addon_folders(ui, app),
+            // TODO: detect if any of the addons have been changed since load, and ask user for confirmation if they have been
+            // TODO: show installation confirmation modal, then transition accordingly
+            Action::InstallAddons => Self {
+                state: ManagingAddonsState::ConfirmingInstall,
+                ..self
+            }.into(),
+            // TODO: show confirmation modal, then transition accordingly
+            Action::UninstallAddons => Self {
+                state: ManagingAddonsState::ConfirmingUninstall,
+                ..self
+            }.into(),
+            Action::DeleteAddon(delete_idx) => Self {
+                state: ManagingAddonsState::ConfirmingDelete(delete_idx),
+                ..self
+            }.into(),
+        }
+    }
+
+    fn handle_substate(self, ui: &mut egui::Ui, app: &mut App) -> State {
+        match self.state {
+            ManagingAddonsState::Managing => self.into(),
+            ManagingAddonsState::ConfirmingInstall => self.handle_confirming_install(ui, app),
+            ManagingAddonsState::ConfirmingUninstall => self.handle_confirming_uninstall(ui, app),
+            ManagingAddonsState::ConfirmingDelete(delete_idx) => self.handle_confirming_delete(ui, delete_idx),
+        }
+    }
+
+    fn handle_confirming_install(self, ui: &mut egui::Ui, app: &mut App) -> State {
+        let mut install_confirmed = false;
+        let modal = Modal::new(Id::new("Confirm Addon Installation")).show(ui.ctx(), |ui| {
+            ui.set_width(500.0);
+            ui.heading("Are you sure?");
+            ui.add_space(16.0);
+            ui.strong("You're about to install the addons as you've configured them. Doing so will override any addons you've installed via dazzle.");
+            ui.add_space(16.0);
+            Sides::new().show(
+                ui,
+                |_ui| {},
+                |ui| {
+                    if ui.button("No! Stop that!").clicked() {
+                        ui.close();
+                    }
+
+                    if ui.button("Yes, install!").clicked() {
+                        install_confirmed = true;
+                        ui.close();
+                    }
+                },
+            )
+        });
+
+        if install_confirmed {
+            // the user confirmed that they want to install their addons
+            Installing::new(self.config, self.addons, ui.ctx(), app).into()
+        } else if modal.should_close() {
+            Self {
+                state: ManagingAddonsState::Managing,
+                ..self
+            }.into()
+        } else {
+            self.into()
+        }
+    }
+
+    fn handle_confirming_uninstall(self, ui: &mut egui::Ui, app: &mut App) -> State {
+        let mut uninstall_confirmed = false;
+        let modal = Modal::new(Id::new("Confirm Addon Uninstallation")).show(ui.ctx(), |ui| {
+            ui.set_width(500.0);
+            ui.heading("Are you sure?");
+            ui.add_space(16.0);
+            ui.strong("You're about to uninstall any addons you've previously installed via dazzle.");
+            ui.add_space(16.0);
+            Sides::new().show(
+                ui,
+                |_ui| {},
+                |ui| {
+                    if ui.button("No! Stop that!").clicked() {
+                        ui.close();
+                    }
+
+                    if ui.button("Yes, uninstall!").clicked() {
+                        uninstall_confirmed = true;
+                        ui.close();
+                    }
+                },
+            )
+        });
+
+        if uninstall_confirmed {
+            // the user confirmed that they want to install their addons
+            Uninstalling::new(self.config, self.addons, ui.ctx(), app).into()
+        } else if modal.should_close() {
+            Self {
+                state: ManagingAddonsState::Managing,
+                ..self
+            }.into()
+        } else {
+            self.into()
+        }
+    }
+
+    fn handle_confirming_delete(mut self, ui: &mut egui::Ui, delete_idx: usize) -> State {
+        let mut delete_confirmed = false;
+        let modal = Modal::new(Id::new("Confirm Addon Deletion")).show(ui.ctx(), |ui| {
+            ui.set_width(500.0);
+            ui.heading("Are you sure?");
+            ui.add_space(16.0);
+            ui.strong(format!(
+                "You're about to permanently delete '{}'. Please confirm:",
+                self.addons.get(delete_idx).unwrap().addon.name()
+            ));
+            ui.add_space(16.0);
+            Sides::new().show(
+                ui,
+                |_ui| {},
+                |ui| {
+                    if ui.button("Delete It!").clicked() {
+                        delete_confirmed = true;
+                        ui.close();
+                    }
+
+                    if ui.button("No! Stop that!").clicked() {
+                        ui.close();
+                    }
+                },
+            )
+        });
+
+        if delete_confirmed {
+            // the user confirmed that they want to delete the addon association with this index, so we
+            // should start the delete process & transition to the delete state.
+            let addon = self.addons.remove(delete_idx);
+
+            RemovingAddon::new(self.config, self.addons, ui.ctx(), addon.addon).into()
+        } else if modal.should_close() {
+            Self {
+                state: ManagingAddonsState::Managing,
+                ..self
+            }.into()
+        } else {
+            self.into()
+        }
+    }
+}
+
+impl HandleState for ManagingAddons {
+    fn handle(mut self, ui: &mut egui::Ui, app: &mut App) -> State {
+        addon_manager::addons_manager(ui, &mut self.addons);
+
+        if let Some(action) = addon_manager::addons_manager(ui, &mut self.addons).action {
+            self.handle_action(action, ui, app)
+        } else {
+            self.handle_substate(ui, app)
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct RemovingAddon {
+    config: Config,
+    addons: Vec<AddonState>,
+    view: ProcessView,
+    job: RemovingAddonJob,
+}
+
+impl RemovingAddon {
+    pub fn new(config: Config, addons: Vec<AddonState>, ctx: &egui::Context, addon: Addon) -> Self {
+        let (view, job) = addon_manager::start_addon_removal(ctx, addon);
+
+        Self {
+            config,
+            addons,
+            view,
+            job,
+        }
+    }
+}
+
+impl HandleState for RemovingAddon {
+    fn handle(mut self, ui: &mut egui::Ui, _app: &mut App) -> State {
+        self.view.show("removing addon contents", ui.ctx());
+        if self.job.is_finished() {
+            // TODO: present job errors to the user as a modal
+            self.job.join().unwrap().unwrap();
+            ManagingAddons::new(self.config, self.addons).into()
+        } else {
+            self.into()
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct AddingAddons {
+    config: Config,
+    view: ProcessView,
+    job: AddingAddonsJob,
+}
+
+impl AddingAddons {
+    pub fn new(config: Config, addons: Vec<AddonState>, files: Vec<Utf8PlatformPathBuf>, ctx: &egui::Context, app: &App) -> Self {
+        let (view, job) = addon_manager::start_addon_add(ctx, &app.paths, addons, files);
+
+        Self {
+            config,
+            view,
+            job,
+        }
+    }
+}
+
+impl HandleState for AddingAddons {
+    fn handle(mut self, ui: &mut egui::Ui, _app: &mut App) -> State {
+        self.view.show("adding addons", ui.ctx());
+        if self.job.is_finished() {
+            // TODO: present job errors to the user as a modal
+            let result = self.job.join().unwrap();
+            for (path, err) in result.1 {
+                eprintln!("There was an error loading {path}: {err}");
+            }
+
+            ManagingAddons::new(self.config, result.0).into()
+        } else {
+            self.into()
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Installing {
+    config: Config,
+    view: ProcessView,
+    job: JoinHandle<anyhow::Result<Vec<AddonState>>>,
+}
+
+impl Installing {
+    pub fn new(config: Config, addons: Vec<AddonState>, ctx: &egui::Context, app: &App) -> Self {
+        let (view, job) = addon_manager::start_addon_install(ctx, &app.paths, &config, addons);
+
+        Self {
+            config,
+            view,
+            job,
+        }
+    }
+}
+
+impl HandleState for Installing {
+    fn handle(mut self, ui: &mut egui::Ui, _app: &mut App) -> State {
+        self.view.show("installing addons", ui.ctx());
+
+        if self.job.is_finished() {
+            // TODO: present job errors to the user as a modal
+            let addons = self.job.join().unwrap().unwrap();
+            ManagingAddons::new(self.config, addons).into()
+        } else {
+            self.into()
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Uninstalling {
+    config: Config,
+    view: ProcessView,
+    job: JoinHandle<anyhow::Result<Vec<AddonState>>>,
+}
+
+impl Uninstalling {
+    pub fn new(config: Config, addons: Vec<AddonState>, ctx: &egui::Context, app: &App) -> Self {
+        let (view, job) = addon_manager::start_addon_uninstall(ctx, &app.paths, &config, addons);
+
+        Self {
+            config,
+            view,
+            job,
+        }
+    }
+}
+
+impl HandleState for Uninstalling {
+    fn handle(mut self, ui: &mut egui::Ui, _app: &mut App) -> State {
+        self.view.show("installing addons", ui.ctx());
+
+        if self.job.is_finished() {
+            // TODO: present job errors to the user as a modal
+            let addons = self.job.join().unwrap().unwrap();
+            ManagingAddons::new(self.config, addons).into()
+        } else {
+            self.into()
+        }
+    }
+}
+
+#[derive(Debug, From)]
 pub(crate) enum State {
-    Launch {
-        config: Config,
-    },
+    Launch(Launch),
 
     /// The user has launched for the first time is choosing a valid tf/ directory
     /// Will always transition to [`State::InitialLoad`].
-    InitialTfDir {
-        config: Config,
-        picker: TfDirPicker,
-    },
+    ConfiguringTfDir(ConfiguringTfDir),
 
     /// We're loading vanilla PCFs & all addons in their addons directory. Doing so allows us to ensure each addon is
     /// valid, and to evaluate conflicts between addons.
     /// Will always transition to [`State::ChoosingAddons`].
-    InitialLoad {
-        config: Config,
-        load_view: ProcessView,
-        job_handle: JoinHandle<Result<Vec<Addon>, LoadError>>,
-    },
+    InitialLoad(InitialLoad),
 
     /// The user is picking which addons to enable/disable, and re-ordering their load priority.
     /// Will always transition to [`State::Installing`].
-    ManagingAddons {
-        config: Config,
-        addons: Vec<AddonState>,
-    },
-
-    ManagingAddonsConfirmingInstall {
-        config: Config,
-        addons: Vec<AddonState>,
-    },
-
-    ManagingAddonsConfirmingUninstall {
-        config: Config,
-        addons: Vec<AddonState>,
-    },
-
-    ManagingAddonsConfirmingDelete {
-        config: Config,
-        addons: Vec<AddonState>,
-        delete_idx: usize,
-    },
+    ManagingAddons(ManagingAddons),
 
     /// The user has decided to delete an addon's contents and remove it from the list.
     /// Will always transition to [`State::ManagingAddons`]
-    RemovingAddon {
-        config: Config,
-        addons: Vec<AddonState>,
-        remove_view: ProcessView,
-        job_handle: JoinHandle<Result<(), io::Error>>,
-    },
+    RemovingAddon(RemovingAddon),
 
     /// The user has selected a new addon to be added to the list
     /// Will always transition to [`State::ManagingAddons`].
-    AddingAddons {
-        config: Config,
-        add_view: ProcessView,
-        job_handle: JoinHandle<(Vec<AddonState>, Vec<(Utf8PlatformPathBuf, LoadError)>)>,
-    },
+    AddingAddons(AddingAddons),
 
     /// We're processing all of their addons and installing them!
     /// Will always transition to [`State::ManagingAddons`].
-    Installing {
-        config: Config,
-        install_view: ProcessView,
-        job_handle: JoinHandle<anyhow::Result<Vec<AddonState>>>,
-    },
+    Installing(Installing),
 
     #[allow(clippy::doc_markdown)]
     /// We're restoring tf2_misc.vpk, removing _dazzle_addons.vpk, and removing _dazzle_qpc.vpk
     /// Will always transition to [`State::ManagingAddons`].
-    Uninstalling {
-        config: Config,
-        uninstall_view: ProcessView,
-        job_handle: JoinHandle<anyhow::Result<Vec<AddonState>>>,
-    },
+    Uninstalling(Uninstalling),
 
     /// An intermediate value used as the enum's default when using helpers like [`std::mem::take`] and [`std::mem::replace`]
     Intermediate,
@@ -141,319 +571,8 @@ impl App {
                 working_vpk: working_vpk_dir,
                 config: config_path,
             },
-            state: State::Launch { config },
+            state: Launch::new(config).into(),
         })
-    }
-
-    fn update_state_launch(ui: &mut egui::Ui, paths: &Paths, config: Config) -> State {
-        if config.tf_dir.as_str().is_empty() {
-            State::InitialTfDir {
-                config,
-                picker: TfDirPicker::new(get_default_platform_tf_dir()),
-            }
-        } else if tf_dir_picker::validate(&config.tf_dir).is_err() {
-            State::InitialTfDir {
-                picker: TfDirPicker::new(config.tf_dir.to_string()),
-                config,
-            }
-        } else {
-            let (load_view, job_handle) = initial_load::start_initial_load(ui.ctx(), paths);
-
-            State::InitialLoad {
-                config,
-                load_view,
-                job_handle,
-            }
-        }
-    }
-
-    fn update_state_initial_tf_dir(ui: &mut egui::Ui, paths: &Paths, config: Config, mut picker: TfDirPicker) -> State {
-        let mut tf_dir = if config.tf_dir.as_str().is_empty() {
-            None
-        } else {
-            Some(config.tf_dir)
-        };
-
-        if picker.update(ui.ctx(), &mut tf_dir) {
-            let config = Config {
-                tf_dir: tf_dir.unwrap(),
-                ..config
-            };
-
-            // TODO: present errors to the user as a modal
-            config::write_config(&paths.config, &config).unwrap();
-
-            let (load_view, job_handle) = initial_load::start_initial_load(ui.ctx(), paths);
-
-            State::InitialLoad {
-                config,
-                load_view,
-                job_handle,
-            }
-        } else {
-            State::InitialTfDir {
-                config: Config {
-                    tf_dir: tf_dir.unwrap_or_default(),
-                    ..config
-                },
-                picker,
-            }
-        }
-    }
-
-    fn state_initial_load(
-        ui: &mut egui::Ui,
-        config: Config,
-        mut load_view: ProcessView,
-        job_handle: JoinHandle<Result<Vec<Addon>, LoadError>>,
-    ) -> State {
-        load_view.show("vanilla pcf and addon loading", ui.ctx());
-        if job_handle.is_finished() {
-            // TODO: present errors to the user as a modal
-            let addons = job_handle.join().unwrap().unwrap();
-            let mut addons: Vec<_> = addons
-                .into_iter()
-                .map(|addon| (config.addons.get(addon.name()).copied().unwrap_or_default(), addon))
-                .collect();
-            addons.sort_by_key(|(config, _)| config.order);
-
-            State::ManagingAddons {
-                config,
-                addons: addons
-                    .into_iter()
-                    .map(|(config, addon)| AddonState {
-                        enabled: config.enabled,
-                        addon,
-                    })
-                    .collect(),
-            }
-        } else {
-            State::InitialLoad {
-                config,
-                load_view,
-                job_handle,
-            }
-        }
-    }
-
-    fn state_managing_addons(&self, ui: &mut egui::Ui, config: Config, mut addons: Vec<AddonState>) -> State {
-        if let Some(action) = addon_manager::addons_manager(ui, &mut addons).action {
-            match action {
-                addon_manager::Action::OpenAddonsFolder => {
-                    file_explorer::open_file_explorer(&self.paths.addons);
-                    State::ManagingAddons { config, addons }
-                }
-                addon_manager::Action::OpenTfFolder => {
-                    file_explorer::open_file_explorer(&config.tf_dir);
-                    State::ManagingAddons { config, addons }
-                }
-                // TODO: after adding the selected addon, refresh all of our other addons to ensure we're up to date
-                addon_manager::Action::AddAddonFiles => {
-                    match FileDialog::new().add_filter("Addon", &["vpk"]).pick_files() {
-                        Some(files) if !files.is_empty() => {
-                            let files = files.into_iter().map(paths::std_buf_to_typed).collect();
-                            let (add_view, job_handle) =
-                                addon_manager::start_addon_add(ui.ctx(), &self.paths, addons, files);
-
-                            State::AddingAddons {
-                                config,
-                                add_view,
-                                job_handle,
-                            }
-                        }
-                        Some(_) => {
-                            eprintln!("No files selected");
-                            State::ManagingAddons { config, addons }
-                        }
-                        None => {
-                            eprintln!("FileDialog didnt return anything");
-                            State::ManagingAddons { config, addons }
-                        }
-                    }
-                }
-                addon_manager::Action::AddAddonFolders => match FileDialog::new().pick_folders() {
-                    Some(files) if !files.is_empty() => {
-                        let files = files.into_iter().map(paths::std_buf_to_typed).collect();
-                        let (add_view, job_handle) =
-                            addon_manager::start_addon_add(ui.ctx(), &self.paths, addons, files);
-
-                        State::AddingAddons {
-                            config,
-                            add_view,
-                            job_handle,
-                        }
-                    }
-                    _ => State::ManagingAddons { config, addons },
-                },
-                // TODO: detect if any of the addons have been changed since load, and ask user for confirmation if they have been
-                // TODO: show installation confirmation modal, then transition accordingly
-                addon_manager::Action::InstallAddons => State::ManagingAddonsConfirmingInstall { config, addons },
-                // TODO: show confirmation modal, then transition accordingly
-                addon_manager::Action::UninstallAddons => State::ManagingAddonsConfirmingUninstall { config, addons },
-                addon_manager::Action::DeleteAddon(delete_idx) => State::ManagingAddonsConfirmingDelete {
-                    config,
-                    addons,
-                    delete_idx,
-                },
-            }
-        } else {
-            State::ManagingAddons { config, addons }
-        }
-    }
-
-    fn state_managing_addons_confirming_install(
-        &self,
-        ui: &mut egui::Ui,
-        config: Config,
-        mut addons: Vec<AddonState>,
-    ) -> State {
-        // we still want to render the addons manager, even though its disabled via the modal
-        addon_manager::addons_manager(ui, &mut addons);
-
-        let mut install_confirmed = false;
-        let modal = Modal::new(Id::new("Confirm Addon Installation")).show(ui.ctx(), |ui| {
-            ui.set_width(500.0);
-            ui.heading("Are you sure?");
-            ui.add_space(16.0);
-            ui.strong("You're about to install the addons as you've configured them. Doing so will override any addons you've installed via dazzle.");
-            ui.add_space(16.0);
-            Sides::new().show(
-                ui,
-                |_ui| {},
-                |ui| {
-                    if ui.button("No! Stop that!").clicked() {
-                        ui.close();
-                    }
-
-                    if ui.button("Yes, install!").clicked() {
-                        install_confirmed = true;
-                        ui.close();
-                    }
-                },
-            )
-        });
-
-        if install_confirmed {
-            // the user confirmed that they want to install their addons
-            let (install_view, job_handle) = addon_manager::start_addon_install(ui.ctx(), &self.paths, &config, addons);
-
-            State::Installing {
-                config,
-                install_view,
-                job_handle,
-            }
-        } else if modal.should_close() {
-            State::ManagingAddons { config, addons }
-        } else {
-            State::ManagingAddonsConfirmingInstall { config, addons }
-        }
-    }
-
-    fn state_managing_addons_confirming_uninstall(
-        &self,
-        ui: &mut egui::Ui,
-        config: Config,
-        mut addons: Vec<AddonState>,
-    ) -> State {
-        // we still want to render the addons manager, even though its disabled via the modal
-        addon_manager::addons_manager(ui, &mut addons);
-
-        let mut uninstall_confirmed = false;
-        let modal = Modal::new(Id::new("Confirm Addon Uninstallation")).show(ui.ctx(), |ui| {
-            ui.set_width(500.0);
-            ui.heading("Are you sure?");
-            ui.add_space(16.0);
-            ui.strong("You're about to uninstall any addons you've previously installed via dazzle.");
-            ui.add_space(16.0);
-            Sides::new().show(
-                ui,
-                |_ui| {},
-                |ui| {
-                    if ui.button("No! Stop that!").clicked() {
-                        ui.close();
-                    }
-
-                    if ui.button("Yes, uninstall!").clicked() {
-                        uninstall_confirmed = true;
-                        ui.close();
-                    }
-                },
-            )
-        });
-
-        if uninstall_confirmed {
-            // the user confirmed that they want to install their addons
-            let (uninstall_view, job_handle) =
-                addon_manager::start_addon_uninstall(ui.ctx(), &self.paths, &config, addons);
-
-            State::Uninstalling {
-                config,
-                uninstall_view,
-                job_handle,
-            }
-        } else if modal.should_close() {
-            State::ManagingAddons { config, addons }
-        } else {
-            State::ManagingAddonsConfirmingUninstall { config, addons }
-        }
-    }
-
-    fn state_managing_addons_confirming_delete(
-        ui: &mut egui::Ui,
-        config: Config,
-        mut addons: Vec<AddonState>,
-        delete_idx: usize,
-    ) -> State {
-        // we still want to render the addons manager, even though its disabled via the modal
-        addon_manager::addons_manager(ui, &mut addons);
-
-        let mut delete_confirmed = false;
-        let modal = Modal::new(Id::new("Confirm Addon Deletion")).show(ui.ctx(), |ui| {
-            ui.set_width(500.0);
-            ui.heading("Are you sure?");
-            ui.add_space(16.0);
-            ui.strong(format!(
-                "You're about to permanently delete '{}'. Please confirm:",
-                addons.get(delete_idx).unwrap().addon.name()
-            ));
-            ui.add_space(16.0);
-            Sides::new().show(
-                ui,
-                |_ui| {},
-                |ui| {
-                    if ui.button("Delete It!").clicked() {
-                        delete_confirmed = true;
-                        ui.close();
-                    }
-
-                    if ui.button("No! Stop that!").clicked() {
-                        ui.close();
-                    }
-                },
-            )
-        });
-
-        if delete_confirmed {
-            // the user confirmed that they want to delete the addon association with this index, so we
-            // should start the delete process & transition to the delete state.
-            let addon = addons.remove(delete_idx);
-            let (remove_view, job_handle) = addon_manager::start_addon_removal(ui.ctx(), addon.addon);
-
-            State::RemovingAddon {
-                config,
-                addons,
-                remove_view,
-                job_handle,
-            }
-        } else if modal.should_close() {
-            State::ManagingAddons { config, addons }
-        } else {
-            State::ManagingAddonsConfirmingDelete {
-                config,
-                addons,
-                delete_idx,
-            }
-        }
     }
 }
 
@@ -461,106 +580,14 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         CentralPanel::default().show(ctx, |ui| {
             let state = match mem::replace(&mut self.state, State::Intermediate) {
-                State::Launch { config } => Self::update_state_launch(ui, &self.paths, config),
-                State::InitialTfDir { config, picker } => {
-                    Self::update_state_initial_tf_dir(ui, &self.paths, config, picker)
-                }
-                State::InitialLoad {
-                    config,
-                    load_view,
-                    job_handle,
-                } => Self::state_initial_load(ui, config, load_view, job_handle),
-                State::ManagingAddons { config, addons } => self.state_managing_addons(ui, config, addons),
-                State::ManagingAddonsConfirmingDelete {
-                    config,
-                    addons,
-                    delete_idx,
-                } => Self::state_managing_addons_confirming_delete(ui, config, addons, delete_idx),
-                State::ManagingAddonsConfirmingInstall { config, addons } => {
-                    self.state_managing_addons_confirming_install(ui, config, addons)
-                }
-                State::ManagingAddonsConfirmingUninstall { config, addons } => {
-                    self.state_managing_addons_confirming_uninstall(ui, config, addons)
-                }
-                State::RemovingAddon {
-                    config,
-                    addons,
-                    mut remove_view,
-                    job_handle,
-                } => {
-                    remove_view.show("removing addon contents", ui.ctx());
-                    if job_handle.is_finished() {
-                        // TODO: present job errors to the user as a modal
-                        job_handle.join().unwrap().unwrap();
-                        State::ManagingAddons { config, addons }
-                    } else {
-                        State::RemovingAddon {
-                            config,
-                            addons,
-                            remove_view,
-                            job_handle,
-                        }
-                    }
-                }
-                State::AddingAddons {
-                    config,
-                    mut add_view,
-                    job_handle,
-                } => {
-                    add_view.show("adding addons", ui.ctx());
-                    if job_handle.is_finished() {
-                        // TODO: present job errors to the user as a modal
-                        let result = job_handle.join().unwrap();
-                        State::ManagingAddons {
-                            config,
-                            addons: result.0,
-                        }
-                    } else {
-                        State::AddingAddons {
-                            config,
-                            add_view,
-                            job_handle,
-                        }
-                    }
-                }
-                State::Installing {
-                    config,
-                    mut install_view,
-                    job_handle,
-                } => {
-                    install_view.show("installing addons", ui.ctx());
-
-                    if job_handle.is_finished() {
-                        // TODO: present job errors to the user as a modal
-                        let addons = job_handle.join().unwrap().unwrap();
-                        State::ManagingAddons { config, addons }
-                    } else {
-                        State::Installing {
-                            config,
-                            install_view,
-                            job_handle,
-                        }
-                    }
-                }
-                State::Uninstalling {
-                    config,
-                    mut uninstall_view,
-                    job_handle,
-                } => {
-                    uninstall_view.show("installing addons", ui.ctx());
-
-                    if job_handle.is_finished() {
-                        // TODO: present job errors to the user as a modal
-                        let addons = job_handle.join().unwrap().unwrap();
-                        State::ManagingAddons { config, addons }
-                    } else {
-                        State::Uninstalling {
-                            config,
-                            uninstall_view,
-                            job_handle,
-                        }
-                    }
-                }
+                State::Launch(launch) => launch.handle(ui, self),
+                State::ConfiguringTfDir(configuring_tf_dir) => configuring_tf_dir.handle(ui, self),
+                State::InitialLoad(initial_load) => initial_load.handle(ui, self),
+                State::ManagingAddons(managing_addons) => managing_addons.handle(ui, self),
+                State::RemovingAddon(removing_addon) => removing_addon.handle(ui, self),
+                State::AddingAddons(adding_addons) => adding_addons.handle(ui, self),
+                State::Installing(installing) => installing.handle(ui, self),
+                State::Uninstalling(uninstalling) => uninstalling.handle(ui, self),
                 State::Intermediate => panic!("under no circumstances should state be Intermediate in the matcher"),
             };
 

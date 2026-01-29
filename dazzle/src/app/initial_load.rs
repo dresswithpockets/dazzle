@@ -30,10 +30,9 @@ pub(crate) enum LoadError {
 // - handling new addons when theyre imported
 // - installing addons to tf2
 
-pub(crate) fn start_initial_load(
-    ctx: &egui::Context,
-    paths: &Paths,
-) -> (ProcessView, JoinHandle<Result<Vec<Addon>, LoadError>>) {
+pub type InitialLoadJob = JoinHandle<Result<Vec<Addon>, LoadError>>;
+
+pub(crate) fn start_initial_load(ctx: &egui::Context, paths: &Paths) -> (ProcessView, InitialLoadJob) {
     let loader = InitialLoader { paths: paths.clone() };
 
     let (load_state, load_view) =
