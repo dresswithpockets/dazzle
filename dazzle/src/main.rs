@@ -96,7 +96,7 @@ fn present_fatal_error_dialogue(err: BuildError) {
     });
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() {
     /*
        Setup/Ensure base data_local_dir
 
@@ -149,6 +149,4 @@ fn main() -> anyhow::Result<()> {
     //       for now we're just assuming there are no conflicts
 
     // TODO: filter out PCFs based on user selection, for now we'll just pick the first one in the list if there are conflicting PCFs
-
-    Ok(())
 }
