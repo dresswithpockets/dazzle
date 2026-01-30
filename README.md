@@ -29,7 +29,9 @@ All features are supported out-of-the-box on Linux, except for certain model cus
 
 ### I want props!
 
-In order to enable support for prop customizations, you have two options:
+Prop customization support requires wine and some Source SDK tools. Install wine via the typical means on your linux distro.
+
+To get the necessary Source SDK tools, you have two options:
 
 #### **Option 1.** Install Source SDK Base 2013 Multiplayer w/ Proton. (Recommended)
 
