@@ -1,5 +1,11 @@
 /target
 
+.vscode/
+
+*.pcf
+!**/test/*.pcf
+!dazzle/src/static/default_values.pcf
+
 *.code-workspace
 local_test/
 dazzle/vanilla/**/*

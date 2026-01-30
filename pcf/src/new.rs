@@ -2059,7 +2059,7 @@ mod graph_tests {
         assert_eq!("daughter's cousin", &step_parent.root.particle_systems[1].name);
     }
 
-    const TEST_PCF_DATA: &[u8] = include_bytes!("medicgun_beam.pcf");
+    const TEST_PCF_DATA: &[u8] = include_bytes!("test/medicgun_beam.pcf");
 
     #[test]
     fn connected_components_can_be_reparsed_as_valid_pcf() {
@@ -2091,7 +2091,7 @@ mod tests {
         children: Vec<char>,
     }
 
-    const TEST_PCF_DATA: &[u8] = include_bytes!("medicgun_beam.pcf");
+    const TEST_PCF_DATA: &[u8] = include_bytes!("test/medicgun_beam.pcf");
 
     #[test]
     fn converts_children() {

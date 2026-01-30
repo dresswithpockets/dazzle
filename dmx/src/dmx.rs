@@ -318,7 +318,7 @@ mod tests {
 
     use super::*;
 
-    const TEST_PCF: &[u8] = include_bytes!("medicgun_beam.pcf");
+    const TEST_PCF: &[u8] = include_bytes!("test/medicgun_beam.pcf");
 
     #[test]
     fn encodes_and_decodes_valid_pcf() {

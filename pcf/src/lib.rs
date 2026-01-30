@@ -9,7 +9,7 @@
 //! #![feature(file_buffered)]
 //! # use bytes::Buf;
 //! #
-//! # const EXAMPLE_PCF: &[u8] = include_bytes!("default_values.pcf");
+//! # const EXAMPLE_PCF: &[u8] = include_bytes!("../../dazzle/src/static/default_values.pcf");
 //! #
 //! # fn main() -> anyhow::Result<()> {
 //!     # let mut reader = EXAMPLE_PCF.reader();
