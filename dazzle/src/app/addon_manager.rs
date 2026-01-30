@@ -621,12 +621,29 @@ fn process_addon(
             continue;
         }
 
-        fs::copy(&path, &new_out_path)?;
+        process_pack_file(&path, &new_out_path)?;
     }
 
     Ok(())
 }
 
+fn process_pack_file(source: &Utf8PlatformPath, dest: &Utf8PlatformPath) -> anyhow::Result<()> {
+    let file_name = source.file_name();
+    if file_name.is_some_and(|file_name| file_name.eq_ignore_ascii_case("mainmenuoverride.res")) {
+        let res_content = fs::read_to_string(source)?;
+        if res_content.contains("\"dazzlevguipreload.res\"") {
+            fs::copy(source, dest)?;
+        } else {
+            let mut file = OpenOptions::new().truncate(true).write(true).create(true).open(dest)?;
+            file.write_all(b"#base \"dazzlevguipreload.res\"\n")?;
+            file.write_all(res_content.as_bytes())?;
+        }
+    } else {
+        fs::copy(source, dest)?;
+    }
+
+    Ok(())
+}
 
 fn restore_tf2_misc_vpk(vpk: &mut VPK) -> anyhow::Result<()> {
     for (name, pcf_data) in particles_manifest::PARTICLES_BYTES {
