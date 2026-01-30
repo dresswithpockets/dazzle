@@ -38,7 +38,7 @@ fn main() {
     {
         let root_text = format!("{} (Dme?Element, {:x?})", pcf.root().name(), pcf.root().signature());
 
-        let mut particle_systems: Vec<_> = pcf.root().particle_systems().iter().enumerate().collect();
+        let particle_systems: Vec<_> = pcf.root().particle_systems().iter().enumerate().collect();
         // particle_systems.sort_by(|a, b| a.1.name.cmp(&b.1.name));
 
         let root = tree.begin_child(root_text);
