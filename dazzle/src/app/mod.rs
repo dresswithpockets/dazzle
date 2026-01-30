@@ -17,7 +17,7 @@ use thiserror::Error;
 use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 
 use crate::app::{
-    addon_manager::{Action, AddingAddonsJob, AddonState, RemovingAddonJob},
+    addon_manager::{Action, AddingAddonsJob, AddonInstallJob, AddonState, AddonUninstallJob, RemovingAddonJob},
     config::{Config, Error},
     initial_load::InitialLoadJob,
     process::ProcessView,
@@ -446,7 +446,7 @@ impl HandleState for AddingAddons {
 pub(crate) struct Installing {
     config: Config,
     view: ProcessView,
-    job: JoinHandle<anyhow::Result<Vec<AddonState>>>,
+    job: AddonInstallJob,
 }
 
 impl Installing {
@@ -479,7 +479,7 @@ impl HandleState for Installing {
 pub(crate) struct Uninstalling {
     config: Config,
     view: ProcessView,
-    job: JoinHandle<anyhow::Result<Vec<AddonState>>>,
+    job: AddonUninstallJob,
 }
 
 impl Uninstalling {
