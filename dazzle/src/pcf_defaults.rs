@@ -6,7 +6,7 @@ use bytes::Buf;
 //      atm build.rs trims a static list of attribute defaults that have been shown to work experimentally.
 
 #[allow(dead_code)]
-pub(crate) const DEFAULT_PCF_DATA: &[u8] = include_bytes!("default_values.pcf");
+pub(crate) const DEFAULT_PCF_DATA: &[u8] = include_bytes!("static/default_values.pcf");
 
 /// Decodes [`DEFAULT_PCF_DATA`] and produces a map of `functionName`, to a default attribute value map.
 #[allow(dead_code)]
