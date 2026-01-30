@@ -48,17 +48,6 @@ pub trait PatchVpkExt {
     /// - there was an IO error when reading the file on disk
     /// - there was an IO error when writing the file on disk
     fn patch_file(&mut self, path_in_vpk: &str, size: u64, reader: &mut impl Read) -> Result<(), PatchError>;
-
-    /// Searches `backup_dir` PCF files recusively under the `particles` subfolder, and patches them into `self` over
-    /// files in the VPK with the same paths relative to `backup_dir`.
-    ///
-    /// ## Errors
-    ///
-    /// Returns [`Err`] if:
-    ///
-    /// - There was an error when searching the `backup_dir`
-    /// - There was an error forming a string path for a PCF
-    fn restore_particles(&mut self, backup_dir: impl AsRef<Path>) -> anyhow::Result<()>;
 }
 
 impl PrintVpkExt for vpk::VPK {
@@ -128,41 +117,6 @@ impl PatchVpkExt for vpk::VPK {
         if entry_size < copied {
             for _ in entry_size..copied {
                 archive_file.write_u8(0)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn restore_particles(&mut self, backup_dir: impl AsRef<Path>) -> anyhow::Result<()> {
-        let backup_dir = backup_dir.as_ref();
-        let particles_glob = backup_dir.to_str().expect("this should never happen").to_string() + "/particles/**/*.pcf";
-        let backup_particle_paths = glob(&particles_glob)?
-            .map(|path| -> anyhow::Result<RelativePathBuf> {
-                let mut path: &Path = &path?;
-                if path.is_absolute() {
-                    path = path.strip_prefix(backup_dir)?;
-                }
-
-                Ok(RelativePathBuf::from_path(path)?)
-            })
-            .collect::<anyhow::Result<Vec<RelativePathBuf>>>()?;
-
-        // restore the particles in the misc vpk with our backup, to ensure we're at a clean state
-        for particle_file in backup_particle_paths {
-            // given ./particles/example.pcf, we should map to:
-
-            //   /particles/example.pcf - the path to the file in the VPK
-            let path_in_vpk = particle_file.clone().into_string();
-
-            //   /path/to/backup/particles/example.pcf - the actual on-disk path of the backup particle file
-            let path_on_disk = particle_file.to_path(backup_dir);
-
-            let size = fs::metadata(&path_on_disk)?.len();
-            let mut reader = File::open(&path_on_disk)?;
-
-            if let Err(err) = self.patch_file(&path_in_vpk, size, &mut reader) {
-                eprintln!("Error patching particle file '{particle_file}': {err}");
             }
         }
 

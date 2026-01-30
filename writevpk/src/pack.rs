@@ -189,7 +189,7 @@ fn write_index_archive(
     };
 
     stream.seek(io::SeekFrom::Start(tree_size_offset))?;
-    stream.write_u32::<LittleEndian>(tree_size as u32)?;
+    stream.write_u32::<LittleEndian>(tree_size)?;
 
     stream.seek(io::SeekFrom::Start(embed_chunk_offset))?;
     stream.write_u32::<LittleEndian>(embed_chunk_size)?;

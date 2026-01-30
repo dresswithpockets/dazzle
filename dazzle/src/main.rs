@@ -97,24 +97,6 @@ fn present_fatal_error_dialogue(err: BuildError) {
 }
 
 fn main() {
-    /*
-       Setup/Ensure base data_local_dir
-
-       Are we in first time setup? (config.toml must exist in data dir)
-           show first time setup with tf/ dir chooser & save config.toml
-
-       Are we configured?
-           Is our version compatible with the version indicated by config.toml?
-               if not, try upgrading. If upgrading fails, show first-time setup again
-
-           Is the tf/ dir still valid?
-               if not, show first time setup
-
-           Create working directories if they dont exist (content, vpk, addons)
-           Setup path strings (backup, tf/custom, tf/tf2_misc_dir.vpk)
-           Show installer viewport
-    */
-
     let app = match App::new() {
         Ok(app) => app,
         Err(err) => {

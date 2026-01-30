@@ -1,8 +1,7 @@
 use byteorder::WriteBytesExt;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::OpenOptions,
     io::{self, Read, Seek, SeekFrom},
-    path::Path,
 };
 
 use thiserror::Error;
@@ -45,17 +44,6 @@ pub trait PatchVpkExt {
     /// - there was an IO error when reading the file on disk
     /// - there was an IO error when writing the file on disk
     fn patch_file(&mut self, path_in_vpk: &str, size: u64, reader: &mut impl Read) -> Result<(), PatchError>;
-
-    /// Searches `backup_dir` PCF files recusively under the `particles` subfolder, and patches them into `self` over
-    /// files in the VPK with the same paths relative to `backup_dir`.
-    ///
-    /// ## Errors
-    ///
-    /// Returns [`Err`] if:
-    ///
-    /// - There was an error when searching the `backup_dir`
-    /// - There was an error forming a string path for a PCF
-    fn restore_particles(&mut self, backup_dir: impl AsRef<Path>) -> anyhow::Result<()>;
 }
 
 impl PrintVpkExt for vpk::VPK {
@@ -149,41 +137,6 @@ impl PatchVpkExt for vpk::VPK {
         if entry_size < copied {
             for _ in entry_size..copied {
                 archive_file.write_u8(0)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn restore_particles(&mut self, backup_dir: impl AsRef<Path>) -> anyhow::Result<()> {
-        let particles_dir = backup_dir.as_ref().join("tf_particles");
-        println!("{}", particles_dir.display());
-        for entry in fs::read_dir(particles_dir)? {
-            let entry = entry?;
-            let metadata = entry.metadata()?;
-            if !metadata.is_file() {
-                continue;
-            }
-
-            let file_name = entry.file_name();
-            let file_name = file_name.to_string_lossy();
-            if !file_name.ends_with(".pcf") {
-                continue;
-            }
-
-            println!("restoring {file_name}");
-
-            //   /particles/example.pcf - the path to the file in the VPK
-            let path_in_vpk = "particles/".to_string() + &file_name;
-
-            //   /path/to/backup/particles/example.pcf - the actual on-disk path of the backup particle file
-            let path_on_disk = entry.path();
-
-            let size = fs::metadata(&path_on_disk)?.len();
-            let mut reader = File::open(&path_on_disk)?;
-
-            if let Err(err) = self.patch_file(&path_in_vpk, size, &mut reader) {
-                eprintln!("Error patching particle file '{path_in_vpk}': {err}");
             }
         }
 
