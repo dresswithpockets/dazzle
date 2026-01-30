@@ -505,12 +505,7 @@ pub fn start_addon_install(
                 packed_system_names.extend(pcf.particle_systems().iter().map(|system| system.name.clone()));
             }
 
-            process_addon(
-                &state,
-                &working_vpk_dir,
-                &mut bins,
-                &addon_state.addon,
-            )?;
+            process_addon(&state, &working_vpk_dir, &mut bins, &addon_state.addon)?;
         }
 
         // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank
