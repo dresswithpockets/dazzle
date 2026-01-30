@@ -6,18 +6,21 @@ Dazzle will automatically process & install the following kinds of mods:
 
 - Particles
 - Player Models, Animations, Face Flexes
-- Weapon Models & Animations
-- Sounds*
+- Weapon Models, Animations
+- Sounds<sup><small>1</small></sup>
+- Skyboxes
+- Warpaints<sup>2</sup>
+- HUDs/VGUI
+- Configs
 
-<small>\* dazzle will install all sound files, but some may not work.</small>
+<small><sup>1</sup> dazzle will install all sound files, but some may not work.</small><br />
+<small><sup>2</sup> custom warpaint textures are supported and cached, but are mostly untested at the moment</small>
 
 Dazzle doesn't support these yet, but will soon:
 
 - Props
 - HUD/VGUI Elements
-- Skyboxes
 - Lightwarps
-- Warpaints
 - Decals
 
 ## Credits
