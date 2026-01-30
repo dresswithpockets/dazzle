@@ -10,6 +10,7 @@ members = [
     "pcf",
     "pcfpack",
     "nanoserde",
+    "studiomdl",
     "writevpk",
     "tools/pcftree",
     "tools/pcfstrip",
