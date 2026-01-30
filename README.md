@@ -13,8 +13,8 @@ Dazzle will automatically process & install the following kinds of mods:
 - HUDs/VGUI
 - Configs
 
-<small><sup>1</sup> dazzle will install all sound files, but some may not work.</small><br />
-<small><sup>2</sup> custom warpaint textures are supported and cached, but are mostly untested at the moment</small>
+<sup>1. dazzle will install all sound files, but some may not work.</sup><br />
+<sup>2. custom warpaint textures are supported and cached, but are mostly untested at the moment</sup>
 
 Dazzle doesn't support these yet, but will soon:
 
