@@ -5,7 +5,7 @@ mod initial_load;
 mod process;
 mod tf_dir_picker;
 
-use std::{env, fs, io, mem, thread::JoinHandle};
+use std::{env, fs, io, mem};
 
 use addon::Addon;
 use derive_more::From;
@@ -71,10 +71,7 @@ pub(crate) struct ConfiguringTfDir {
 impl ConfiguringTfDir {
     pub fn new(config: Config, tf_path: String) -> Self {
         let picker = TfDirPicker::new(tf_path);
-        Self {
-            config,
-            picker,
-        }
+        Self { config, picker }
     }
 }
 
@@ -103,7 +100,8 @@ impl HandleState for ConfiguringTfDir {
                     ..self.config
                 },
                 picker: self.picker,
-            }.into()
+            }
+            .into()
         }
     }
 }
@@ -119,11 +117,7 @@ impl InitialLoad {
     pub fn new(config: Config, ctx: &egui::Context, paths: &Paths) -> Self {
         let (view, job) = initial_load::start_initial_load(ctx, paths);
 
-        Self {
-            config,
-            view,
-            job,
-        }
+        Self { config, view, job }
     }
 }
 
@@ -141,12 +135,13 @@ impl HandleState for InitialLoad {
 
             addons.sort_by_key(|(config, _)| config.order);
 
-            let addons = addons.into_iter()
-                    .map(|(config, addon)| AddonState {
-                        enabled: config.enabled,
-                        addon,
-                    })
-                    .collect();
+            let addons = addons
+                .into_iter()
+                .map(|(config, addon)| AddonState {
+                    enabled: config.enabled,
+                    addon,
+                })
+                .collect();
 
             ManagingAddons::new(self.config, addons).into()
         } else {
@@ -220,12 +215,14 @@ impl ManagingAddons {
             Action::InstallAddons => Self {
                 state: ManagingAddonsState::ConfirmingInstall,
                 ..self
-            }.into(),
+            }
+            .into(),
             // TODO: show confirmation modal, then transition accordingly
             Action::UninstallAddons => Self {
                 state: ManagingAddonsState::ConfirmingUninstall,
                 ..self
-            }.into(),
+            }
+            .into(),
             Action::DeleteAddon(delete_idx) => Self {
                 state: ManagingAddonsState::ConfirmingDelete(delete_idx),
                 ..self
@@ -273,7 +270,8 @@ impl ManagingAddons {
             Self {
                 state: ManagingAddonsState::Managing,
                 ..self
-            }.into()
+            }
+            .into()
         } else {
             self.into()
         }
@@ -310,7 +308,8 @@ impl ManagingAddons {
             Self {
                 state: ManagingAddonsState::Managing,
                 ..self
-            }.into()
+            }
+            .into()
         } else {
             self.into()
         }
@@ -353,7 +352,8 @@ impl ManagingAddons {
             Self {
                 state: ManagingAddonsState::Managing,
                 ..self
-            }.into()
+            }
+            .into()
         } else {
             self.into()
         }
@@ -414,14 +414,16 @@ pub(crate) struct AddingAddons {
 }
 
 impl AddingAddons {
-    pub fn new(config: Config, addons: Vec<AddonState>, files: Vec<Utf8PlatformPathBuf>, ctx: &egui::Context, app: &App) -> Self {
+    pub fn new(
+        config: Config,
+        addons: Vec<AddonState>,
+        files: Vec<Utf8PlatformPathBuf>,
+        ctx: &egui::Context,
+        app: &App,
+    ) -> Self {
         let (view, job) = addon_manager::start_addon_add(ctx, &app.paths, addons, files);
 
-        Self {
-            config,
-            view,
-            job,
-        }
+        Self { config, view, job }
     }
 }
 
@@ -453,11 +455,7 @@ impl Installing {
     pub fn new(config: Config, addons: Vec<AddonState>, ctx: &egui::Context, app: &App) -> Self {
         let (view, job) = addon_manager::start_addon_install(ctx, &app.paths, &config, addons);
 
-        Self {
-            config,
-            view,
-            job,
-        }
+        Self { config, view, job }
     }
 }
 
@@ -486,11 +484,7 @@ impl Uninstalling {
     pub fn new(config: Config, addons: Vec<AddonState>, ctx: &egui::Context, app: &App) -> Self {
         let (view, job) = addon_manager::start_addon_uninstall(ctx, &app.paths, &config, addons);
 
-        Self {
-            config,
-            view,
-            job,
-        }
+        Self { config, view, job }
     }
 }
 
