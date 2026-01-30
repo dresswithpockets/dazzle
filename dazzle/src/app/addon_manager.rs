@@ -511,7 +511,12 @@ pub fn start_addon_install(
         let mut tf2_misc_vpk = VPK::read(vpk_path)?;
 
         // the vgui cache is necessary to enable custom skyboxes and warpaints
+        state.push_status("Enabling VGUI caching");
         ensure_vgui_cache_in_hud(&working_vpk_dir, &tf2_misc_vpk)?;
+
+        // some vtf customizations - like warpaints - require a VMT to be present in tf/custom/.
+        state.push_status("Generating VMTs for VTF customizations");
+        ensure_all_vtfs_have_matching_vmts(&working_vpk_dir, &tf2_misc_vpk)?;
 
         // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank
         // slate for our addons; so, we pack every vanilla particle system not present in the bins.
@@ -586,6 +591,51 @@ pub fn start_addon_install(
     });
 
     (view, handle)
+}
+
+fn ensure_all_vtfs_have_matching_vmts(working_vpk_dir: &Utf8PlatformPath, tf2_misc_vpk: &VPK) -> Result<(), anyhow::Error> {
+    let working_materials_dir = working_vpk_dir.join("materials");
+    for entry in WalkDir::new(&working_materials_dir) {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if !metadata.is_file() {
+            continue;
+        }
+
+        let vtf_path = paths::to_typed(entry.path());
+        let is_vtf = vtf_path.extension().is_some_and(|ex| ex.eq_ignore_ascii_case("vtf"));
+        if !is_vtf {
+            continue;
+        }
+
+        let vmt_path = vtf_path.with_extension("vmt");
+        let mut vmt_file = OpenOptions::new().write(true).create(true).truncate(false).open(&vmt_path)?;
+        let vmt_already_existed = vmt_file.stream_len()? > 0;
+        if vmt_already_existed {
+            continue;
+        }
+
+        // if the customizations didn't provide their own VMT, then we need to create our own. By default, we just copy
+        // whatever VMT vanilla tf2 provides for that VTF. If there is no matching VMT in vanilla tf2, then we just
+        // output a very simple default VMT.
+        let vmt_path_in_vpk = vmt_path.strip_prefix(working_vpk_dir)?;
+        if let Some(vpk_vmt_entry) = tf2_misc_vpk.tree.get(vmt_path_in_vpk.as_str()) {
+            let mut entry_reader = vpk_vmt_entry.reader()?;
+
+            io::copy(&mut entry_reader, &mut vmt_file)?;
+        } else {
+            let vtf_materials_path = vtf_path.strip_prefix(&working_materials_dir)?;
+            let vmt_contents = format!("\"LightmappedGeneric\"
+{{
+\t\"$basetexture\" \"{vtf_materials_path}\"
+}}
+");
+            
+            vmt_file.write_all(vmt_contents.as_bytes())?;
+        }
+    }
+
+    Ok(())
 }
 
 fn ensure_vgui_cache_in_hud(working_vpk_dir: &Utf8PlatformPath, tf2_misc_vpk: &VPK) -> Result<(), anyhow::Error> {

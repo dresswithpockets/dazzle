@@ -29,6 +29,7 @@
 #![feature(push_mut)]
 #![feature(lock_value_accessors)]
 #![feature(mpmc_channel)]
+#![feature(seek_stream_len)]
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
