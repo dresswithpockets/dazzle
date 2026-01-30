@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
-    fs,
-    io::{self, ErrorKind},
+    fs::{self, OpenOptions},
+    io::{self, ErrorKind, Write},
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -16,7 +16,7 @@ use addon::{Addon, Sources};
 use itertools::Itertools;
 use pcfpack::BinPack;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use typed_path::Utf8PlatformPathBuf;
+use typed_path::{Utf8PlatformPath, Utf8PlatformPathBuf};
 use vpk::VPK;
 use walkdir::WalkDir;
 use writevpk::patch::PatchVpkExt;
@@ -351,7 +351,9 @@ pub fn start_addon_add(
                 let name = file.file_name().unwrap();
 
                 if addons.iter().any(|state| state.addon.name().eq_ignore_ascii_case(name)) {
-                    eprintln!("Confirming: 'An addon with the name '{name}' has already been added. What do you want to do?'");
+                    eprintln!(
+                        "Confirming: 'An addon with the name '{name}' has already been added. What do you want to do?'"
+                    );
                     let choice = state.confirm(
                         format!("An addon with the name '{name}' has already been added. What do you want to do?"),
                         ["Skip", "Replace Existing"],
@@ -463,12 +465,14 @@ pub fn start_addon_add(
     (view, handle)
 }
 
+pub type AddonInstallJob = JoinHandle<anyhow::Result<Vec<AddonState>>>;
+
 pub fn start_addon_install(
     ctx: &egui::Context,
     paths: &Paths,
     config: &Config,
     addons: Vec<AddonState>,
-) -> (ProcessView, JoinHandle<anyhow::Result<Vec<AddonState>>>) {
+) -> (ProcessView, AddonInstallJob) {
     const TF2_VPK_NAME: &str = "tf2_misc_dir.vpk";
 
     let (state, view) = ProcessState::with_spinner(ctx);
@@ -483,19 +487,7 @@ pub fn start_addon_install(
 
     let handle = thread::spawn(move || -> anyhow::Result<Vec<AddonState>> {
         state.push_status("Saving updated config");
-        for (idx, addon_state) in addons.iter().enumerate() {
-            config
-                .addons
-                .entry(addon_state.addon.name().to_string())
-                .and_modify(|addon_config| {
-                    addon_config.enabled = addon_state.enabled;
-                    addon_config.order = idx;
-                })
-                .or_insert(AddonConfig {
-                    enabled: addon_state.enabled,
-                    order: idx,
-                });
-        }
+        update_config_addon_states(&addons, &mut config);
         config::write_config(&config_path, &config)?;
 
         state.push_status("Loading particle graph from manifest");
@@ -509,45 +501,16 @@ pub fn start_addon_install(
                 continue;
             }
 
-            // first we bin-pack our addons' custom particles
-            for (path, pcf) in &addon_state.addon.particle_files {
-                state.push_status(format!("Bin-packing {}'s {path}", addon_state.addon.name()));
-                let graph = pcf.clone().into_connected();
-                for mut pcf in graph {
-                    packed_system_names.extend(pcf.particle_systems().iter().map(|system| system.name.clone()));
-                    bins.pack(&mut pcf).unwrap();
-                }
+            for pcf in addon_state.addon.particle_files.values() {
+                packed_system_names.extend(pcf.particle_systems().iter().map(|system| system.name.clone()));
             }
 
-            // then we copy over all non-particle contents to the vpk working directory - which will be packed into
-            // _dazzle_addons.vpk later.
-            let content_path = &addon_state.addon.content_path;
-            for entry in WalkDir::new(content_path).contents_first(false) {
-                let entry = entry?;
-                let metadata = entry.metadata()?;
-
-                state.push_status(format!(
-                    "Copying {}'s {}",
-                    addon_state.addon.name(),
-                    entry.path().display()
-                ));
-
-                let path = paths::to_typed(entry.path()).absolutize()?;
-                let new_out_path = working_vpk_dir.join(path.strip_prefix(content_path)?);
-
-                // create the directory before we copy anything over. We guarantee that the directory is iterated first
-                // with contents_first(false) earlier
-                if metadata.is_dir() {
-                    if let Err(err) = fs::create_dir(&new_out_path)
-                        && err.kind() != io::ErrorKind::AlreadyExists
-                    {
-                        return Err(err.into());
-                    }
-                    continue;
-                }
-
-                fs::copy(&path, &new_out_path)?;
-            }
+            process_addon(
+                &state,
+                &working_vpk_dir,
+                &mut bins,
+                &addon_state.addon,
+            )?;
         }
 
         // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank
@@ -569,34 +532,13 @@ pub fn start_addon_install(
 
         // TODO: create quickprecache assets for props & pack them into _dazzle_qpc.vpk
 
-        let mut vpk = VPK::read(vpk_path)?;
+        let mut tf2_misc_vpk = VPK::read(vpk_path)?;
 
         state.push_status("Restoring tf2_misc.vpk");
-        for (name, pcf_data) in particles_manifest::PARTICLES_BYTES {
-            let mut reader = pcf_data.reader();
-            vpk.patch_file(name, pcf_data.len() as u64, &mut reader)?;
-        }
+        restore_tf2_misc_vpk(&mut tf2_misc_vpk)?;
 
         state.push_status("Removing old _dazzle_addons.vpk");
-        for entry in fs::read_dir(&tf_custom_dir)? {
-            let entry = entry?;
-            let path = paths::std_buf_to_typed(entry.path());
-            let file_name = path.file_name().unwrap();
-            let extension = path.extension().unwrap_or("");
-            let is_dazzle = file_name.starts_with("_dazzle_addons")
-                && (extension.eq_ignore_ascii_case("vpk") || extension.eq_ignore_ascii_case("cache"));
-            let metadata = entry.metadata()?;
-            if !metadata.is_file() {
-                if is_dazzle {
-                    return Err(anyhow!("Unexpected directory or symlink with _dazzle_addons*.vpk name"));
-                }
-                continue;
-            }
-
-            if is_dazzle {
-                fs::remove_file(&path)?;
-            }
-        }
+        remove_old_dazzle_vpks(&tf_custom_dir)?;
 
         for bin in bins {
             let (name, pcf) = bin.into_inner();
@@ -609,7 +551,7 @@ pub fn start_addon_install(
             let buffer = writer.into_inner();
             let size = buffer.len() as u64;
             let mut reader = buffer.reader();
-            vpk.patch_file(&name, size, &mut reader)?;
+            tf2_misc_vpk.patch_file(&name, size, &mut reader)?;
         }
 
         // we can finally generate our _dazzle_addons VPKs from our addon contents.
@@ -648,12 +590,106 @@ pub fn start_addon_install(
     (view, handle)
 }
 
+fn process_addon(
+    state: &ProcessState,
+    working_vpk_dir: &Utf8PlatformPath,
+    bins: &mut Box<[pcfpack::Bin]>,
+    addon: &Addon,
+) -> anyhow::Result<()> {
+    for (path, pcf) in &addon.particle_files {
+        state.push_status(format!("Bin-packing {}'s {path}", addon.name()));
+
+        let graph = pcf.clone().into_connected();
+        for mut pcf in graph {
+            bins.pack(&mut pcf).unwrap();
+        }
+    }
+
+    let content_path = &addon.content_path;
+    for entry in WalkDir::new(content_path).contents_first(false) {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+
+        state.push_status(format!("Processing {}'s {}", addon.name(), entry.path().display()));
+
+        let path = paths::to_typed(entry.path()).absolutize()?;
+        let new_out_path = working_vpk_dir.join(path.strip_prefix(content_path)?);
+
+        // create the directory before we copy anything over. We guarantee that the directory is iterated first
+        // with contents_first(false) earlier
+        if metadata.is_dir() {
+            if let Err(err) = fs::create_dir(&new_out_path)
+                && err.kind() != io::ErrorKind::AlreadyExists
+            {
+                return Err(err.into());
+            }
+            continue;
+        }
+
+        fs::copy(&path, &new_out_path)?;
+    }
+
+    Ok(())
+}
+
+
+fn restore_tf2_misc_vpk(vpk: &mut VPK) -> anyhow::Result<()> {
+    for (name, pcf_data) in particles_manifest::PARTICLES_BYTES {
+        let mut reader = pcf_data.reader();
+        vpk.patch_file(name, pcf_data.len() as u64, &mut reader)?;
+    }
+
+    Ok(())
+}
+
+fn remove_old_dazzle_vpks(tf_custom_dir: &Utf8PlatformPath) -> anyhow::Result<()> {
+    for entry in fs::read_dir(tf_custom_dir)? {
+        let entry = entry?;
+        let path = paths::std_buf_to_typed(entry.path());
+        let file_name = path.file_name().unwrap();
+        let extension = path.extension().unwrap_or("");
+        let is_dazzle = file_name.starts_with("_dazzle_addons")
+            && (extension.eq_ignore_ascii_case("vpk") || extension.eq_ignore_ascii_case("cache"));
+        let metadata = entry.metadata()?;
+        if !metadata.is_file() {
+            if is_dazzle {
+                return Err(anyhow!("Unexpected directory or symlink with _dazzle_addons*.vpk name"));
+            }
+            continue;
+        }
+
+        if is_dazzle {
+            fs::remove_file(&path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn update_config_addon_states(addons: &[AddonState], config: &mut Config) {
+    for (idx, addon_state) in addons.iter().enumerate() {
+        config
+            .addons
+            .entry(addon_state.addon.name().to_string())
+            .and_modify(|addon_config| {
+                addon_config.enabled = addon_state.enabled;
+                addon_config.order = idx;
+            })
+            .or_insert(AddonConfig {
+                enabled: addon_state.enabled,
+                order: idx,
+            });
+    }
+}
+
+pub type AddonUninstallJob = JoinHandle<anyhow::Result<Vec<AddonState>>>;
+
 pub fn start_addon_uninstall(
     ctx: &egui::Context,
     paths: &Paths,
     config: &Config,
     addons: Vec<AddonState>,
-) -> (ProcessView, JoinHandle<anyhow::Result<Vec<AddonState>>>) {
+) -> (ProcessView, AddonUninstallJob) {
     const TF2_VPK_NAME: &str = "tf2_misc_dir.vpk";
 
     let (state, view) = ProcessState::with_spinner(ctx);
@@ -668,49 +704,16 @@ pub fn start_addon_uninstall(
 
     let handle = thread::spawn(move || -> anyhow::Result<Vec<AddonState>> {
         state.push_status("Saving updated config");
-        for (idx, addon_state) in addons.iter().enumerate() {
-            config
-                .addons
-                .entry(addon_state.addon.name().to_string())
-                .and_modify(|addon_config| {
-                    addon_config.enabled = addon_state.enabled;
-                    addon_config.order = idx;
-                })
-                .or_insert(AddonConfig {
-                    enabled: addon_state.enabled,
-                    order: idx,
-                });
-        }
+        update_config_addon_states(&addons, &mut config);
         config::write_config(&config_path, &config)?;
 
-        let mut vpk = VPK::read(vpk_path)?;
+        let mut tf2_misc_vpk = VPK::read(vpk_path)?;
 
         state.push_status("Restoring tf2_misc.vpk");
-        for (name, pcf_data) in particles_manifest::PARTICLES_BYTES {
-            let mut reader = pcf_data.reader();
-            vpk.patch_file(name, pcf_data.len() as u64, &mut reader)?;
-        }
+        restore_tf2_misc_vpk(&mut tf2_misc_vpk)?;
 
-        state.push_status("Removing _dazzle_addons.vpk");
-        for entry in fs::read_dir(&tf_custom_dir)? {
-            let entry = entry?;
-            let path = paths::std_buf_to_typed(entry.path());
-            let file_name = path.file_name().unwrap();
-            let extension = path.extension().unwrap_or("");
-            let is_dazzle = file_name.starts_with("_dazzle_addons")
-                && (extension.eq_ignore_ascii_case("vpk") || extension.eq_ignore_ascii_case("cache"));
-            let metadata = entry.metadata()?;
-            if !metadata.is_file() {
-                if is_dazzle {
-                    return Err(anyhow!("Unexpected directory or symlink with _dazzle_addons*.vpk name"));
-                }
-                continue;
-            }
-
-            if is_dazzle {
-                fs::remove_file(&path)?;
-            }
-        }
+        state.push_status("Removing old _dazzle_addons.vpk");
+        remove_old_dazzle_vpks(&tf_custom_dir)?;
 
         // TODO: remove _dazzle_qpc.vpk
 
