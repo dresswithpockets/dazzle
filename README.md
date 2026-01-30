@@ -9,7 +9,7 @@ Dazzle will automatically process & install the following kinds of mods:
 - Weapon Models, Animations
 - Sounds<sup><small>1</small></sup>
 - Skyboxes
-- Warpaints<sup>2</sup>
+- Warpaints
 - HUDs/VGUI
 - Configs
 
