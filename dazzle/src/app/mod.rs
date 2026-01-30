@@ -226,16 +226,8 @@ impl ManagingAddons {
             Action::DeleteAddon(delete_idx) => Self {
                 state: ManagingAddonsState::ConfirmingDelete(delete_idx),
                 ..self
-            }.into(),
-        }
-    }
-
-    fn handle_substate(self, ui: &mut egui::Ui, app: &mut App) -> State {
-        match self.state {
-            ManagingAddonsState::Managing => self.into(),
-            ManagingAddonsState::ConfirmingInstall => self.handle_confirming_install(ui, app),
-            ManagingAddonsState::ConfirmingUninstall => self.handle_confirming_uninstall(ui, app),
-            ManagingAddonsState::ConfirmingDelete(delete_idx) => self.handle_confirming_delete(ui, delete_idx),
+            }
+            .into(),
         }
     }
 
@@ -362,12 +354,17 @@ impl ManagingAddons {
 
 impl HandleState for ManagingAddons {
     fn handle(mut self, ui: &mut egui::Ui, app: &mut App) -> State {
-        addon_manager::addons_manager(ui, &mut self.addons);
-
-        if let Some(action) = addon_manager::addons_manager(ui, &mut self.addons).action {
-            self.handle_action(action, ui, app)
-        } else {
-            self.handle_substate(ui, app)
+        match self.state {
+            ManagingAddonsState::Managing => {
+                if let Some(action) = addon_manager::addons_manager(ui, &mut self.addons).action {
+                    self.handle_action(action, ui, app)
+                } else {
+                    self.into()
+                }
+            },
+            ManagingAddonsState::ConfirmingInstall => self.handle_confirming_install(ui, app),
+            ManagingAddonsState::ConfirmingUninstall => self.handle_confirming_uninstall(ui, app),
+            ManagingAddonsState::ConfirmingDelete(delete_idx) => self.handle_confirming_delete(ui, delete_idx),
         }
     }
 }
