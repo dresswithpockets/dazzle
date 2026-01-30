@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     fs::{self, OpenOptions},
-    io::{self, ErrorKind, Write},
+    io::{self, ErrorKind, Read, Seek, Write},
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -508,6 +508,11 @@ pub fn start_addon_install(
             process_addon(&state, &working_vpk_dir, &mut bins, &addon_state.addon)?;
         }
 
+        let mut tf2_misc_vpk = VPK::read(vpk_path)?;
+
+        // the vgui cache is necessary to enable custom skyboxes and warpaints
+        ensure_vgui_cache_in_hud(&working_vpk_dir, &tf2_misc_vpk)?;
+
         // the bins don't contain any of the necessary particle systems by default, since they're supposed to be a blank
         // slate for our addons; so, we pack every vanilla particle system not present in the bins.
         for (name, graphs) in &vanilla_graphs {
@@ -526,8 +531,6 @@ pub fn start_addon_install(
         }
 
         // TODO: create quickprecache assets for props & pack them into _dazzle_qpc.vpk
-
-        let mut tf2_misc_vpk = VPK::read(vpk_path)?;
 
         state.push_status("Restoring tf2_misc.vpk");
         restore_tf2_misc_vpk(&mut tf2_misc_vpk)?;
@@ -585,6 +588,51 @@ pub fn start_addon_install(
     (view, handle)
 }
 
+fn ensure_vgui_cache_in_hud(working_vpk_dir: &Utf8PlatformPath, tf2_misc_vpk: &VPK) -> Result<(), anyhow::Error> {
+    // TODO: we should generate dazzlevguicache.res based on what warpaints & skyboxes have been customized by the user
+    const DAZZLE_VGUI_CACHE_RES: &[u8] = include_bytes!("../static/dazzlevguicache.res");
+
+    let dest = working_vpk_dir.join("resource/ui/mainmenuoverride.res");
+    let result = OpenOptions::new().write(true).read(true).open(&dest);
+    match result {
+        Ok(mut file) => {
+            // the user provided a custom mainmenuoverride.res, so we'll prepend `#base "dazzlevguicache.res"`
+            // to the existing file - but only if it doesn't already contain it.
+            let mut buf = String::new();
+            file.read_to_string(&mut buf)?;
+
+            if !buf.contains("#base \"dazzlevguicache.res\"") {
+                file.seek(io::SeekFrom::Start(0))?;
+                file.write_all(b"#base \"dazzlevguicache.res\"\n")?;
+                file.write_all(buf.as_bytes())?;
+            }
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            // no custom mainmenuoverride.res. We'll assume that the user is using the vanilla
+            // mainmenuoverride.res, so we'll extract the vanilla file and prepend
+            // `#base "dazzlevguicache.res"` to it.
+            let entry = tf2_misc_vpk
+                .tree
+                .get("resource/ui/mainmenuoverride.res")
+                .ok_or(anyhow!("tf2_misc.vpk is missing mainmenuoverride.res"))?;
+
+            fs::create_dir_all(dest.parent().unwrap())?;
+
+            let mut reader = entry.reader()?;
+            let mut file = OpenOptions::new().write(true).create_new(true).open(&dest)?;
+            file.write_all(b"#base \"dazzlevguicache.res\"\n")?;
+            io::copy(&mut reader, &mut file)?;
+        }
+        Err(err) => Err(err)?,
+    }
+
+    // we also gotta make sure that dazzlevguicache.res even exists in the first place
+    let dest = dest.with_file_name("dazzlevguicache.res");
+    fs::write(&dest, DAZZLE_VGUI_CACHE_RES)?;
+
+    Ok(())
+}
+
 fn process_addon(
     state: &ProcessState,
     working_vpk_dir: &Utf8PlatformPath,
@@ -621,25 +669,7 @@ fn process_addon(
             continue;
         }
 
-        process_pack_file(&path, &new_out_path)?;
-    }
-
-    Ok(())
-}
-
-fn process_pack_file(source: &Utf8PlatformPath, dest: &Utf8PlatformPath) -> anyhow::Result<()> {
-    let file_name = source.file_name();
-    if file_name.is_some_and(|file_name| file_name.eq_ignore_ascii_case("mainmenuoverride.res")) {
-        let res_content = fs::read_to_string(source)?;
-        if res_content.contains("\"dazzlevguipreload.res\"") {
-            fs::copy(source, dest)?;
-        } else {
-            let mut file = OpenOptions::new().truncate(true).write(true).create(true).open(dest)?;
-            file.write_all(b"#base \"dazzlevguipreload.res\"\n")?;
-            file.write_all(res_content.as_bytes())?;
-        }
-    } else {
-        fs::copy(source, dest)?;
+        fs::copy(&path, &new_out_path)?;
     }
 
     Ok(())
