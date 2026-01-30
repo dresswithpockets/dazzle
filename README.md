@@ -30,7 +30,7 @@ Dazzle's prop model precache is based on [GoopSwagger](https://github.com/Lucifi
 
 ## Build from source
 
-Dazzle can be built with Rust v1.94 Nightly.
+Dazzle can be built with Rust v1.95 Nightly.
 
 Dazzle has a compile-time dependency on the the vanilla TF2 particles & particles manifest. After cloning, you must extract `particles/` from `tf/tf2_misc_dir.vpk` into `dazzle/dazzle/vanilla/particles/`.
 
