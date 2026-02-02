@@ -1,5 +1,5 @@
 use eframe::egui::{self, Align2, TextEdit, TextStyle, Vec2b};
-use faccess::PathExt;
+use faccess::{AccessMode, PathExt};
 use std::{
     fs,
     io::{self, ErrorKind},
@@ -144,6 +144,15 @@ pub(crate) enum TfValidationError {
 
     #[error("The 'tf2_misc_dir.vpk' file exists but we lack permissions to read or write to it")]
     MissingVpkPermissions,
+
+    #[error("Couldn't find 'gameinfo.txt' in the path specified")]
+    MissingGameInfo,
+
+    #[error("'gameinfo.txt' exists but it is not a file")]
+    GameInfoNotAFile,
+
+    #[error("The 'gameinfo.txt' file exists but we lack permissions to read or write to it")]
+    MissingGameInfoPermissions,
 }
 
 pub(crate) fn validate(path: &Utf8PlatformPath) -> Result<(), TfValidationError> {
@@ -151,6 +160,7 @@ pub(crate) fn validate(path: &Utf8PlatformPath) -> Result<(), TfValidationError>
     // ensure that this is the case:
     //   - {picked_dir}/tf2_misc_dir.vpk exists, is a file, is a valid VPK index, and we have read/write permissions
     //   - {picked_dir}/custom exists, and is a dir, and we have read/write permissions
+    //   - {picked_dir}/gameinfo.txt exists, and is a file, and we have read/write permissions
 
     if !path.is_valid() {
         return Err(TfValidationError::InvalidPath);
@@ -177,7 +187,7 @@ pub(crate) fn validate(path: &Utf8PlatformPath) -> Result<(), TfValidationError>
         return Err(TfValidationError::CustomNotADirectory);
     }
 
-    if !custom_dir.readable() || !custom_dir.writable() {
+    if custom_dir.access(AccessMode::READ | AccessMode::WRITE).is_err() {
         return Err(TfValidationError::MissingCustomFolderPermissions);
     }
 
@@ -192,7 +202,22 @@ pub(crate) fn validate(path: &Utf8PlatformPath) -> Result<(), TfValidationError>
         return Err(TfValidationError::VpkNotAFile);
     }
 
-    if !tf2_misc_vpk.readable() || !tf2_misc_vpk.writable() {
+    if tf2_misc_vpk.access(AccessMode::READ | AccessMode::WRITE).is_err() {
+        return Err(TfValidationError::MissingVpkPermissions);
+    }
+
+    let gameinfo_path = path.join("gameinfo.txt");
+    let metadata = fs::metadata(&gameinfo_path).map_err(|err| match err.kind() {
+        ErrorKind::NotFound => TfValidationError::MissingGameInfo,
+        ErrorKind::PermissionDenied => TfValidationError::MissingGameInfoPermissions,
+        _ => TfValidationError::Io(err),
+    })?;
+
+    if !metadata.is_file() {
+        return Err(TfValidationError::GameInfoNotAFile);
+    }
+
+    if gameinfo_path.access(AccessMode::READ | AccessMode::WRITE).is_err() {
         return Err(TfValidationError::MissingVpkPermissions);
     }
 
