@@ -3507,6 +3507,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "qc"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "qoi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4216,6 +4223,11 @@ dependencies = [
 [[package]]
 name = "studiomdl"
 version = "0.1.0"
+dependencies = [
+ "faccess",
+ "thiserror 2.0.17",
+ "typed-path",
+]
 
 [[package]]
 name = "subtle"

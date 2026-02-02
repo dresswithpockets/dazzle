@@ -1,11 +1,9 @@
 [package]
-name = "studiomdl"
+name = "qc"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-typed-path.workspace = true
-faccess.workspace = true
 thiserror.workspace = true
 
 [lints]

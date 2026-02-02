@@ -11,6 +11,7 @@ members = [
     "pcfpack",
     "nanoserde",
     "studiomdl",
+    "qc",
     "writevpk",
     "tools/pcftree",
     "tools/pcfstrip",
