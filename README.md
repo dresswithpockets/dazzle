@@ -18,7 +18,6 @@ Dazzle will automatically process & install the following kinds of mods:
 Dazzle doesn't support these yet, but will soon:
 
 - Props
-- HUD/VGUI Elements
 - Lightwarps
 - Decals
 
